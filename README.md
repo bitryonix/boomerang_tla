@@ -94,18 +94,34 @@ One especially important surrogate property is `ObservationalConsistencySurrogat
 ## Running TLC
 
 The repository includes a local `tools/tla2tools.jar`, so you can run TLC directly if Java is installed.
+For a one-shot local run, pass `-workers auto` to let TLC use all available cores.
 
 Example:
 
 ```bash
-java -jar tools/tla2tools.jar -config spec/MC_BoomerangWithdrawalCore.cfg spec/BoomerangWithdrawalCore.tla
+java -jar tools/tla2tools.jar -workers auto -config spec/MC_BoomerangWithdrawalCore.cfg spec/BoomerangWithdrawalCore.tla
 ```
 
 If you want TLC metadata out of the repository tree, use a temporary metadir:
 
 ```bash
 META=$(mktemp -d /tmp/boomerang-tlc.XXXXXX)
-java -jar tools/tla2tools.jar -config spec/MC_BoomerangWithdrawalCore.cfg -metadir "$META" spec/BoomerangWithdrawalCore.tla
+java -jar tools/tla2tools.jar -workers auto -config spec/MC_BoomerangWithdrawalCore.cfg -metadir "$META" spec/BoomerangWithdrawalCore.tla
+```
+
+If you want a run to be recoverable later, prefer an explicit worker count instead of `auto`, and use the same `-workers` value again when resuming with `-recover`.
+TLC writes per-worker checkpoint files such as `BoomerangWithdrawalCore-0.chkpt`, so changing worker count between the original run and the recovery run can fail with missing `BoomerangWithdrawalCore-<n>.chkpt` files.
+
+Example recoverable run:
+
+```bash
+java -jar tools/tla2tools.jar -workers 10 -config spec/MC_BoomerangWithdrawalCore.cfg spec/BoomerangWithdrawalCore.tla
+```
+
+Example recovery of that same run:
+
+```bash
+java -jar tools/tla2tools.jar -workers 10 -recover states/26-03-25-00-00-41 -config spec/MC_BoomerangWithdrawalCore.cfg spec/BoomerangWithdrawalCore.tla
 ```
 
 ## Current Verification Status
