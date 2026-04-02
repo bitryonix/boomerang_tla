@@ -1083,28 +1083,28 @@ Outbound transitions: to `Global.Withdrawal.Initiation`, or to explicit out-of-s
 
 Entry condition: an initiator user submits a PSBT and `milestone_block_0` has been reached.  
 Exit condition: WT accepted the initiator approval and distributed `wt_tx_approval` plus encrypted PSBT copies to non-initiators.  
-Core effect: latch a candidate `tx_id`, obtain local ST approval of that `tx_id`, and create the initiator approval message.  
+Core effect: latch a candidate `tx_id`, run the explicit ST/Boomlet nonce-coupled `tx_id` challenge-response, and only then create the initiator approval message.  
 Outbound transitions: to `Global.Withdrawal.Approval`.
 
 ### `Global.Withdrawal.Approval`
 
 Entry condition: non-initiators have received the WT initiation bundle.  
 Exit condition: WT has collected the expected approval set and all peers have locally validated the approval collection required to proceed.  
-Core effect: each non-initiator locally approves the PSBT and `tx_id`, emits its own approval, and all peers mirror approval validations.  
+Core effect: each non-initiator locally approves the PSBT, runs its own explicit ST/Boomlet nonce-coupled `tx_id` challenge-response, emits its own approval only after that transcript succeeds, and all peers mirror approval validations.  
 Outbound transitions: to `Global.Withdrawal.Commitment`.
 
 ### `Global.Withdrawal.Commitment`
 
 Entry condition: all approvals needed by the sources are present.  
 Exit condition: WT has redistributed the full commit collection and each peer verified its own SAR-signed placeholder.  
-Core effect: initial duress check, initiator commit, non-initiator approvals bundle asymmetry, non-initiator commits, SAR processing of each placeholder, and full commit collection redistribution.  
+Core effect: initial ST/Boomlet nonce-coupled duress check, initiator commit, non-initiator approvals bundle asymmetry, non-initiator commits, SAR processing of each placeholder, and full commit collection redistribution.  
 Outbound transitions: to `Global.Withdrawal.DiggingGame`.
 
 ### `Global.Withdrawal.DiggingGame`
 
 Entry condition: every peer verified the commit collection and entered the digging game with `counter=0`, `ping_seq_num=0`, `reached_mystery_flag=0`, and empty reached collections.  
 Exit condition: WT holds a valid reached ping for every peer and distributes `reached_pings_collection`.  
-Core effect: repeated ping-pong rounds, optional repeated duress checks, counter increments, monotone reaching of local mysteries, and WT loop termination on all-peers reached condition.  
+Core effect: repeated ping-pong rounds, optional recurring ST/Boomlet nonce-coupled duress checks before selected next pings, counter increments, monotone reaching of local mysteries, and WT loop termination on all-peers reached condition.  
 Outbound transitions: to `Global.Signing`.
 
 ### `Global.Signing`
@@ -1181,6 +1181,13 @@ The initiating peer, denoted `Peer(0)` only by role and not by permanent identit
 - At the first duress check, the initiator immediately emits its own padded `"commit"` to WT.
 - A non-initiator does **not** emit its own commit immediately after the initial duress check. Instead it first sends `approvals_signed_by_boomlet_i`, a signed bundle of all approvals plus `wt_tx_approval`, and only emits its own padded `"commit"` after it has received and validated WT’s acknowledgment of the initiator’s commit.
 
+The authoritative TLA+ withdrawal model now makes the ST/Boomlet challenge-response subflow explicit inside that asymmetry instead of treating it as an implicit local check:
+
+- `withdrawal.md` steps `2-8` map to the initiator's internal `AwaitingInitialTxIdAck` substate, where Boomlet fixes `{sid, tx_id, nonce}`, ST returns the matching signed acknowledgement, and only then does the initiator emit its approval toward WT.
+- `withdrawal.md` steps `16-22` map to the non-initiator's internal `AwaitingInitialTxIdAck` substate, with the same nonce-bound `tx_id` acknowledgement requirement before approval emission.
+- `withdrawal.md` steps `28-33` map to `AwaitingInitialDuressAck`, where Boomlet issues a nonce-bound initial duress challenge and derives the first placeholder kind only from the matching ST response.
+- `withdrawal.md` steps `52-57` map to `AwaitingRecurringDuressAck`, where a selected digging round pauses before the next ping until the nonce-bound recurring duress response has been accepted.
+
 This asymmetry ends after WT redistributes the full commit collection and each peer verifies its SAR-signed placeholder. From that point onward, the non-initiator withdrawal diagram explicitly states that the non-initiator follows the same steps as the initiator. This specification therefore converges both roles into a common `Peer(i).Withdrawal.DiggingGame` state beginning at commit-collection verification.
 
 ### 9.3 Composite withdrawal states
@@ -1189,6 +1196,11 @@ This asymmetry ends after WT redistributes the full commit collection and each p
 Entry: user submitted a PSBT to `Niso(i)` and local milestone/freshness guards passed.  
 Exit: initiator approval and encrypted PSBT copies were sent to WT.  
 Anchors: `withdrawal.md` 1–9; `initiator_withdrawal.puml` 1–9.
+
+**`Peer(i).Withdrawal.AwaitingInitialTxIdAck`** [DERIVED]  
+Entry: local Boomlet fixed the candidate `tx_id`, created a nonce-bound ST challenge, and is waiting for the matching ST acknowledgement.  
+Exit: local approval is emitted toward WT.  
+Anchors: `withdrawal.md` 2–8 for the initiator, `withdrawal.md` 16–22 for each non-initiator, plus the corresponding withdrawal diagrams.
 
 **`Peer(i).Withdrawal.NonInitiator.AwaitingWTBundle`**  
 Entry: peer is active-ready and WT has not yet sent an initiation bundle.  
@@ -1200,10 +1212,10 @@ Entry: non-initiator decrypted the PSBT and locally presented it to the user.
 Exit: local `"approved"` message sent to WT.  
 Anchors: `withdrawal.md` 13–23; `non_initiator_withdrawal.puml` 13–23.
 
-**`Peer(i).Withdrawal.AwaitingInitialDuressResolution`**  
-Entry: the source-required approval set is locally validated.  
+**`Peer(i).Withdrawal.AwaitingInitialDuressAck`** [DERIVED]  
+Entry: the source-required approval set is locally validated and Boomlet has emitted the nonce-bound initial duress challenge to ST.  
 Exit: initiator emitted a commit, or non-initiator emitted its approvals bundle.  
-Anchors: `withdrawal.md` 27–35n; both withdrawal diagrams.
+Anchors: `withdrawal.md` 28–33 for the initiator, `withdrawal.md` 28n–33n for non-initiators, and the follow-on commit steps in both withdrawal diagrams.
 
 **`Peer(i).Withdrawal.AwaitingCommitCollection`**  
 Entry: initiator commit path or non-initiator approvals-bundle path has advanced to the WT/SAR roundtrip.  
@@ -1214,6 +1226,11 @@ Anchors: `withdrawal.md` 35–45; both withdrawal diagrams.
 Entry: peer initialized `counter_i`, `ping_seq_num_i`, `reached_mystery_flag_i`, `reached_boomlets_collection_i`, and `last_seen_block_i`.  
 Exit: WT distributed `reached_pings_collection`.  
 Anchors: `withdrawal.md` 45–61; `initiator_withdrawal.puml` 45–61; convergence note from `non_initiator_withdrawal.puml` step 44.
+
+**`Peer(i).Withdrawal.AwaitingRecurringDuressAck`** [DERIVED]  
+Entry: during the digging game, Boomlet selected a check-bearing round and emitted a nonce-bound recurring duress challenge to ST before constructing the next ping.  
+Exit: peer emits the next ping for the current `ping_seq_num + 1`.  
+Anchors: `withdrawal.md` 52–57 and the corresponding repeated-check steps in the withdrawal diagrams.
 
 **`Peer(i).Withdrawal.ReadyToSign`**  
 Entry: peer verified `reached_pings_collection` and matching hydrated `tx_id`.  
