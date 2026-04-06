@@ -32,7 +32,7 @@ What to check:
 
 - initial states compute successfully
 - no invariant violation appears
-- the transcript-binding invariants fail fast if the ST/Boomlet nonce flow is wired incorrectly
+- the transcript-binding and non-initiator local-review invariants fail fast if the approval path is wired incorrectly
 - the run gets meaningfully into the state space without an early counterexample
 
 ## Notes

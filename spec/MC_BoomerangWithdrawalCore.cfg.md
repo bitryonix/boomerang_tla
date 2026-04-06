@@ -45,7 +45,7 @@ What to check:
 
 - TLC starts cleanly
 - the safety invariants do not fail
-- the nonce-transcript invariants (`ApprovalsRequireAcceptedTxIdTranscript`, `CommitsRequireAcceptedInitialDuressTranscript`, `RecurringChecksRequireAcceptedTranscript`) do not fail
+- the nonce-transcript and local-review invariants (`ApprovalsRequireAcceptedTxIdTranscript`, `NonInitiatorTxIdPathRequiresLocalPsbtReview`, `CommitsRequireAcceptedInitialDuressTranscript`, `RecurringChecksRequireAcceptedTranscript`) do not fail
 - the history properties (`UsedSessionsMonotone`, `CompletedWithdrawalsMonotone`, `PlaceholderLedgerMonotone`, `SARReplayMemoryMonotone`) do not fail
 
 ## Notes

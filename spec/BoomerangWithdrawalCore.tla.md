@@ -28,11 +28,15 @@ The model covers:
 
 - milestone-gated initiator start
 - `session_id` and `tx_id` freezing during an active withdrawal
+- explicit non-initiator local PSBT review before the ST-mediated `tx_id` confirmation path begins
 - approval emission only after a matching accepted `tx_id` transcript
+- explicit per-peer verification of the WT-signed initiator commit before any non-initiator emits its own commit
 - initial and recurrent duress resolution only through matching accepted nonce-bound transcripts
 - commit collection with exact placeholder-instance SAR acknowledgements
 - WT-coordinated ping/pong rounds with stronger seq and block-distance checks
 - all-reached transition to signing readiness
+- role-specific approval-window validation for initiator and non-initiator approvals
+- explicit sender-field consistency across accepted approvals, commits, bundles, and pings
 - signing-ticket binding across hydration, signed export, and WT broadcast
 - post-broadcast cleanup and `mystery` regeneration
 - fallback as a separate boundary condition
@@ -54,6 +58,8 @@ The important proof-boundary choices in this file are:
 - SAR is modeled as single per peer
 - ST/Boomlet freshness is represented by exact transcript binding on `{sid, tx_id, peer, stage, seq, nonce}`
 - the literal country-grid challenge content is still abstracted to symbolic `consent_match`
+- PSBT satisfiability is still abstracted rather than modeled as executable state
+- explicit peer-id set membership remains abstracted by the finite `Peers` set and fixed `INITIATOR`
 - replay suppression is per peer over placeholder-instance memory
 - freshness witnesses are recorded at acceptance time
 - signing is bound by a lightweight signing ticket
@@ -64,25 +70,25 @@ The important proof-boundary choices in this file are:
 
 | Lines | Purpose |
 | --- | --- |
-| `1-123` | Module header, constants, assumptions, and shared domains. This is where `ChallengeNonces`, the new nonce-aware peer states, and the symbolic duress stages enter the model. |
-| `124-154` | TLC helper operators used for constant binding in curated cfgs. |
+| `1-130` | Module header, constants, assumptions, and shared domains. This is where `ChallengeNonces`, the new nonce-aware peer states, and the symbolic duress stages enter the model. |
+| `132-154` | TLC helper operators used for constant binding in curated cfgs. |
 | `156-289` | Symbolic message constructors for approvals, bundles, commits, SAR acknowledgements, pings, pongs, signed PSBTs, broadcasts, and the explicit ST/Boomlet transcript records. |
-| `291-856` | Structural, matching, freshness, replay, digging-game, and well-formedness helpers. This is the message-shape layer and transcript-binding layer for the whole model. |
-| `858-1708` | PlusCal variables and processes. This is where the peer-local `AwaitingInitialTxIdAck`, `AwaitingInitialDuressAck`, and `AwaitingRecurringDuressAck` substates live, along with post-broadcast reset. |
-| `1712-3982` | Generated PlusCal translation. Regenerate this block with `pcal.trans` after editing the PlusCal algorithm. |
-| `3988-4585` | Post-translation state predicates and safety invariants. This is where the accepted transcript witnesses, observable-envelope surrogate, freshness checks, signing-ticket invariants, and deadlock classification live. |
-| `4588-4641` | Temporal/history properties and fairness-backed liveness operators. This includes `SpecWithFairness` and the scoped liveness properties. |
+| `291-963` | Structural, matching, freshness, replay, digging-game, and well-formedness helpers. This now includes the role-specific approval-window helpers. |
+| `965-1964` | PlusCal variables and processes. This is where the peer-local `AwaitingNonInitiatorLocalApproval`, `AwaitingInitialTxIdAck`, `AwaitingInitialDuressAck`, and `AwaitingRecurringDuressAck` substates live, along with post-broadcast reset. |
+| `1967-4376` | Generated PlusCal translation. Regenerate this block with `pcal.trans` after editing the PlusCal algorithm. |
+| `4379-5052` | Post-translation state predicates and safety invariants. This is where the accepted transcript witnesses, observable-envelope surrogate, freshness checks, the initiator-commit and reached-ping guard hardening, the non-initiator local-review invariant, sender-field invariants, signing-ticket invariants, and deadlock classification live. |
+| `5055-5110` | Temporal/history properties and fairness-backed liveness operators. This includes `SpecWithFairness` and the scoped liveness properties. |
 
 ## How To Read It Manually
 
 Use this order:
 
 1. Read `1-109` for the state vocabulary.
-2. Read `156-856` for messages, transcript matching, freshness, replay, and digging helpers.
-3. Read the PlusCal algorithm at `858-1708`.
-4. Treat `1712-3982` as generated executable form.
-5. Read the safety properties at `3988-4585`.
-6. Finish with the temporal and liveness operators at `4588-4641`.
+2. Read `156-963` for messages, transcript matching, freshness, replay, approval windows, and digging helpers.
+3. Read the PlusCal algorithm at `965-1964`.
+4. Treat `1967-4376` as generated executable form.
+5. Read the safety properties at `4379-5052`.
+6. Finish with the temporal and liveness operators at `5055-5110`.
 
 ## Manual Verification
 
@@ -96,7 +102,7 @@ java -cp tools/tla2tools.jar pcal.trans spec/BoomerangWithdrawalCore.tla
 
 What to check:
 
-- the translation still begins around line `1654`
+- the translation still begins around line `1937`
 - only the `\* BEGIN TRANSLATION` to `\* END TRANSLATION` block changes
 - `spec/BoomerangWithdrawalCore.cfg` may be rewritten by the translator; that file is a translator byproduct, not one of the curated `MC_*.cfg` harnesses
 
@@ -122,7 +128,7 @@ java -jar tools/tla2tools.jar -workers 1 -config spec/MC_BoomerangWithdrawalCore
 What to check:
 
 - no invariant fails
-- the strengthened placeholder, nonce-transcript, freshness, and signing-ticket properties hold
+- the strengthened placeholder, nonce-transcript, non-initiator local-review, initiator-commit, reached-ping, sender-field, freshness, and signing-ticket properties hold
 
 ### 4. Run the tiny sanity cfg
 

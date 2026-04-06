@@ -1968,16 +1968,16 @@ end algorithm; *)
 VARIABLES mystery_i, used_sessions, completed_withdrawals, session_id, tx_id, 
           current_placeholder_i, placeholder_owner, placeholder_kind, psbt_i, 
           hydrated_psbt_i, signed_psbt_i, signing_ticket_i, 
-          local_psbt_reviewed_i, pending_txid_challenge_i, 
-          accepted_txid_challenge_i, accepted_txid_ack_i, 
-          accepted_txid_ack_height_i, pending_duress_challenge_i, 
-          accepted_duress_challenge_i, accepted_duress_ack_i, 
-          accepted_duress_ack_height_i, current_ping_from_recurring_check_i, 
-          peer_state, wt_state, wt_session_view, peer_tx_approval_collection, 
-          wt_tx_approval, approval_outbox, wt_bundle_inbox, 
-          approval_collection_delivered, payload_kind_i, duress_latched_i, 
-          duress_checks_i, approval_bundle_outbox, approvals_bundle_accepted, 
-          commit_outbox, initiator_commit_acked, initiator_commit_inbox, 
+          pending_txid_challenge_i, accepted_txid_challenge_i, 
+          accepted_txid_ack_i, accepted_txid_ack_height_i, 
+          pending_duress_challenge_i, accepted_duress_challenge_i, 
+          accepted_duress_ack_i, accepted_duress_ack_height_i, 
+          current_ping_from_recurring_check_i, peer_state, wt_state, 
+          wt_session_view, peer_tx_approval_collection, wt_tx_approval, 
+          approval_outbox, wt_bundle_inbox, approval_collection_delivered, 
+          payload_kind_i, duress_latched_i, duress_checks_i, 
+          approval_bundle_outbox, approvals_bundle_accepted, commit_outbox, 
+          initiator_commit_acked, initiator_commit_inbox, 
           peer_tx_commit_collection, commit_collection_delivered, 
           saved_expected_sar_ack, sar_pending_ack_request, sar_ack_i, 
           sar_seen_placeholder_ids_i, sar_escalated_i, wt_round_pings, 
@@ -1999,16 +1999,16 @@ VARIABLES mystery_i, used_sessions, completed_withdrawals, session_id, tx_id,
 vars == << mystery_i, used_sessions, completed_withdrawals, session_id, tx_id, 
            current_placeholder_i, placeholder_owner, placeholder_kind, psbt_i, 
            hydrated_psbt_i, signed_psbt_i, signing_ticket_i, 
-           local_psbt_reviewed_i, pending_txid_challenge_i, 
-           accepted_txid_challenge_i, accepted_txid_ack_i, 
-           accepted_txid_ack_height_i, pending_duress_challenge_i, 
-           accepted_duress_challenge_i, accepted_duress_ack_i, 
-           accepted_duress_ack_height_i, current_ping_from_recurring_check_i, 
-           peer_state, wt_state, wt_session_view, peer_tx_approval_collection, 
-           wt_tx_approval, approval_outbox, wt_bundle_inbox, 
-           approval_collection_delivered, payload_kind_i, duress_latched_i, 
-           duress_checks_i, approval_bundle_outbox, approvals_bundle_accepted, 
-           commit_outbox, initiator_commit_acked, initiator_commit_inbox, 
+           pending_txid_challenge_i, accepted_txid_challenge_i, 
+           accepted_txid_ack_i, accepted_txid_ack_height_i, 
+           pending_duress_challenge_i, accepted_duress_challenge_i, 
+           accepted_duress_ack_i, accepted_duress_ack_height_i, 
+           current_ping_from_recurring_check_i, peer_state, wt_state, 
+           wt_session_view, peer_tx_approval_collection, wt_tx_approval, 
+           approval_outbox, wt_bundle_inbox, approval_collection_delivered, 
+           payload_kind_i, duress_latched_i, duress_checks_i, 
+           approval_bundle_outbox, approvals_bundle_accepted, commit_outbox, 
+           initiator_commit_acked, initiator_commit_inbox, 
            peer_tx_commit_collection, commit_collection_delivered, 
            saved_expected_sar_ack, sar_pending_ack_request, sar_ack_i, 
            sar_seen_placeholder_ids_i, sar_escalated_i, wt_round_pings, 
@@ -2042,7 +2042,6 @@ Init == (* Global variables *)
         /\ hydrated_psbt_i = [i \in Peers |-> NoPsbt]
         /\ signed_psbt_i = [i \in Peers |-> NoPsbt]
         /\ signing_ticket_i = [i \in Peers |-> NoMessage]
-        /\ local_psbt_reviewed_i = [i \in Peers |-> FALSE]
         /\ pending_txid_challenge_i = [i \in Peers |-> NoMessage]
         /\ accepted_txid_challenge_i = [i \in Peers |-> NoMessage]
         /\ accepted_txid_ack_i = [i \in Peers |-> NoMessage]
@@ -2122,7 +2121,6 @@ PeerSessionLoop(self) == /\ pc[self] = "PeerSessionLoop"
                                          placeholder_owner, placeholder_kind, 
                                          psbt_i, hydrated_psbt_i, 
                                          signed_psbt_i, signing_ticket_i, 
-                                         local_psbt_reviewed_i, 
                                          pending_txid_challenge_i, 
                                          accepted_txid_challenge_i, 
                                          accepted_txid_ack_i, 
@@ -2198,33 +2196,36 @@ ActiveReady(self) == /\ pc[self] = "ActiveReady"
                                                                                                                    self,
                                                                                                                    nonce)]
                                          /\ peer_state' = [peer_state EXCEPT ![self] = "AwaitingInitialTxIdAck"]
-                                /\ UNCHANGED << local_psbt_reviewed_i, 
-                                                wt_bundle_inbox, 
+                                /\ UNCHANGED << wt_bundle_inbox, 
                                                 peer_accepted_wt_bundle, 
                                                 peer_accepted_wt_bundle_height >>
-                           ELSE /\    peer_state[self] = "ActiveReady"
-                                   /\ wt_bundle_inbox[self] # NoMessage
-                                   /\ NisoAcceptsWTBundle(
-                                        self,
-                                        wt_bundle_inbox[self],
-                                        session_id,
-                                        tx_id,
-                                        niso_i_event_block_height[self])
-                                   /\ BoomletAcceptsWTBundle(
-                                        self,
-                                        wt_bundle_inbox[self],
-                                        session_id,
-                                        tx_id,
-                                        niso_i_event_block_height[self])
-                                /\ psbt_i' = [psbt_i EXCEPT ![self] = WTBundlePsbt(wt_bundle_inbox[self])]
-                                /\ peer_accepted_wt_bundle' = [peer_accepted_wt_bundle EXCEPT ![self] = wt_bundle_inbox[self]]
-                                /\ peer_accepted_wt_bundle_height' = [peer_accepted_wt_bundle_height EXCEPT ![self] = niso_i_event_block_height[self]]
-                                /\ local_psbt_reviewed_i' = [local_psbt_reviewed_i EXCEPT ![self] = FALSE]
-                                /\ peer_state' = [peer_state EXCEPT ![self] = "AwaitingNonInitiatorLocalApproval"]
-                                /\ wt_bundle_inbox' = [wt_bundle_inbox EXCEPT ![self] = NoMessage]
-                                /\ UNCHANGED << session_id, tx_id, 
-                                                pending_txid_challenge_i >>
-                     /\ pc' = [pc EXCEPT ![self] = "AwaitNonInitiatorLocalApproval"]
+                           ELSE /\ \E nonce \in ChallengeNonces:
+                                     /\    peer_state[self] = "ActiveReady"
+                                        /\ wt_bundle_inbox[self] # NoMessage
+                                        /\ NisoAcceptsWTBundle(
+                                             self,
+                                             wt_bundle_inbox[self],
+                                             session_id,
+                                             tx_id,
+                                             niso_i_event_block_height[self])
+                                        /\ BoomletAcceptsWTBundle(
+                                             self,
+                                             wt_bundle_inbox[self],
+                                             session_id,
+                                             tx_id,
+                                             niso_i_event_block_height[self])
+                                     /\ psbt_i' = [psbt_i EXCEPT ![self] = WTBundlePsbt(wt_bundle_inbox[self])]
+                                     /\ peer_accepted_wt_bundle' = [peer_accepted_wt_bundle EXCEPT ![self] = wt_bundle_inbox[self]]
+                                     /\ peer_accepted_wt_bundle_height' = [peer_accepted_wt_bundle_height EXCEPT ![self] = niso_i_event_block_height[self]]
+                                     /\ pending_txid_challenge_i' = [pending_txid_challenge_i EXCEPT ![self] =                               TxIdChallengeMsgFor(
+                                                                                                               session_id,
+                                                                                                               tx_id,
+                                                                                                               self,
+                                                                                                               nonce)]
+                                     /\ peer_state' = [peer_state EXCEPT ![self] = "AwaitingInitialTxIdAck"]
+                                     /\ wt_bundle_inbox' = [wt_bundle_inbox EXCEPT ![self] = NoMessage]
+                                /\ UNCHANGED << session_id, tx_id >>
+                     /\ pc' = [pc EXCEPT ![self] = "AwaitInitialTxIdAck"]
                      /\ UNCHANGED << mystery_i, used_sessions, 
                                      completed_withdrawals, 
                                      current_placeholder_i, placeholder_owner, 
@@ -2278,99 +2279,6 @@ ActiveReady(self) == /\ pc[self] = "ActiveReady"
                                      most_work_bitcoin_block_height, 
                                      last_seen_block_i >>
 
-AwaitNonInitiatorLocalApproval(self) == /\ pc[self] = "AwaitNonInitiatorLocalApproval"
-                                        /\ IF self # INITIATOR
-                                              THEN /\ \E nonce \in ChallengeNonces:
-                                                        /\    peer_state[self] = "AwaitingNonInitiatorLocalApproval"
-                                                           /\ psbt_i[self] # NoPsbt
-                                                           /\ SameTxId(psbt_i[self], tx_id)
-                                                        /\ local_psbt_reviewed_i' = [local_psbt_reviewed_i EXCEPT ![self] = TRUE]
-                                                        /\ pending_txid_challenge_i' = [pending_txid_challenge_i EXCEPT ![self] =                               TxIdChallengeMsgFor(
-                                                                                                                                  session_id,
-                                                                                                                                  tx_id,
-                                                                                                                                  self,
-                                                                                                                                  nonce)]
-                                                        /\ peer_state' = [peer_state EXCEPT ![self] = "AwaitingInitialTxIdAck"]
-                                              ELSE /\ TRUE
-                                                   /\ UNCHANGED << local_psbt_reviewed_i, 
-                                                                   pending_txid_challenge_i, 
-                                                                   peer_state >>
-                                        /\ pc' = [pc EXCEPT ![self] = "AwaitInitialTxIdAck"]
-                                        /\ UNCHANGED << mystery_i, 
-                                                        used_sessions, 
-                                                        completed_withdrawals, 
-                                                        session_id, tx_id, 
-                                                        current_placeholder_i, 
-                                                        placeholder_owner, 
-                                                        placeholder_kind, 
-                                                        psbt_i, 
-                                                        hydrated_psbt_i, 
-                                                        signed_psbt_i, 
-                                                        signing_ticket_i, 
-                                                        accepted_txid_challenge_i, 
-                                                        accepted_txid_ack_i, 
-                                                        accepted_txid_ack_height_i, 
-                                                        pending_duress_challenge_i, 
-                                                        accepted_duress_challenge_i, 
-                                                        accepted_duress_ack_i, 
-                                                        accepted_duress_ack_height_i, 
-                                                        current_ping_from_recurring_check_i, 
-                                                        wt_state, 
-                                                        wt_session_view, 
-                                                        peer_tx_approval_collection, 
-                                                        wt_tx_approval, 
-                                                        approval_outbox, 
-                                                        wt_bundle_inbox, 
-                                                        approval_collection_delivered, 
-                                                        payload_kind_i, 
-                                                        duress_latched_i, 
-                                                        duress_checks_i, 
-                                                        approval_bundle_outbox, 
-                                                        approvals_bundle_accepted, 
-                                                        commit_outbox, 
-                                                        initiator_commit_acked, 
-                                                        initiator_commit_inbox, 
-                                                        peer_tx_commit_collection, 
-                                                        commit_collection_delivered, 
-                                                        saved_expected_sar_ack, 
-                                                        sar_pending_ack_request, 
-                                                        sar_ack_i, 
-                                                        sar_seen_placeholder_ids_i, 
-                                                        sar_escalated_i, 
-                                                        wt_round_pings, 
-                                                        wt_last_accepted_ping, 
-                                                        peer_reviewed_ping_history_i, 
-                                                        pong_i, 
-                                                        reached_collection_delivered, 
-                                                        reached_pings_collection, 
-                                                        counter_i, 
-                                                        ping_seq_num_i, 
-                                                        reached_mystery_flag_i, 
-                                                        reached_boomlets_collection_i, 
-                                                        signed_psbt_outbox, 
-                                                        wt_signed_psbt_collection, 
-                                                        broadcast_record, 
-                                                        wt_accepted_approval, 
-                                                        wt_accepted_approval_height, 
-                                                        peer_accepted_wt_bundle, 
-                                                        peer_accepted_wt_bundle_height, 
-                                                        peer_accepted_initiator_commit, 
-                                                        peer_accepted_initiator_commit_height, 
-                                                        wt_accepted_commit, 
-                                                        wt_accepted_commit_height, 
-                                                        wt_accepted_ping, 
-                                                        wt_accepted_ping_height, 
-                                                        peer_accepted_pong, 
-                                                        peer_accepted_pong_height, 
-                                                        peer_accepted_sar_ack, 
-                                                        peer_accepted_sar_ack_expected, 
-                                                        peer_accepted_sar_ack_height, 
-                                                        hardware_lost, 
-                                                        fallback_activated, 
-                                                        niso_i_event_block_height, 
-                                                        most_work_bitcoin_block_height, 
-                                                        last_seen_block_i >>
-
 AwaitInitialTxIdAck(self) == /\ pc[self] = "AwaitInitialTxIdAck"
                              /\    peer_state[self] = "AwaitingInitialTxIdAck"
                                 /\ pending_txid_challenge_i[self] # NoMessage
@@ -2402,7 +2310,6 @@ AwaitInitialTxIdAck(self) == /\ pc[self] = "AwaitInitialTxIdAck"
                                              placeholder_kind, psbt_i, 
                                              hydrated_psbt_i, signed_psbt_i, 
                                              signing_ticket_i, 
-                                             local_psbt_reviewed_i, 
                                              pending_duress_challenge_i, 
                                              accepted_duress_challenge_i, 
                                              accepted_duress_ack_i, 
@@ -2494,7 +2401,6 @@ AwaitApprovalCollection(self) == /\ pc[self] = "AwaitApprovalCollection"
                                                  hydrated_psbt_i, 
                                                  signed_psbt_i, 
                                                  signing_ticket_i, 
-                                                 local_psbt_reviewed_i, 
                                                  pending_txid_challenge_i, 
                                                  accepted_txid_challenge_i, 
                                                  accepted_txid_ack_i, 
@@ -2585,7 +2491,6 @@ AwaitInitialDuressAck(self) == /\ pc[self] = "AwaitInitialDuressAck"
                                                placeholder_kind, psbt_i, 
                                                hydrated_psbt_i, signed_psbt_i, 
                                                signing_ticket_i, 
-                                               local_psbt_reviewed_i, 
                                                pending_txid_challenge_i, 
                                                accepted_txid_challenge_i, 
                                                accepted_txid_ack_i, 
@@ -2677,7 +2582,6 @@ AfterInitialDuress(self) == /\ pc[self] = "AfterInitialDuress"
                                             completed_withdrawals, session_id, 
                                             tx_id, psbt_i, hydrated_psbt_i, 
                                             signed_psbt_i, signing_ticket_i, 
-                                            local_psbt_reviewed_i, 
                                             pending_txid_challenge_i, 
                                             accepted_txid_challenge_i, 
                                             accepted_txid_ack_i, 
@@ -2791,7 +2695,6 @@ AwaitInitiatorCommitAck(self) == /\ pc[self] = "AwaitInitiatorCommitAck"
                                                  hydrated_psbt_i, 
                                                  signed_psbt_i, 
                                                  signing_ticket_i, 
-                                                 local_psbt_reviewed_i, 
                                                  pending_txid_challenge_i, 
                                                  accepted_txid_challenge_i, 
                                                  accepted_txid_ack_i, 
@@ -2903,7 +2806,6 @@ EnterDiggingGame(self) == /\ pc[self] = "EnterDiggingGame"
                                           completed_withdrawals, session_id, 
                                           tx_id, psbt_i, hydrated_psbt_i, 
                                           signed_psbt_i, signing_ticket_i, 
-                                          local_psbt_reviewed_i, 
                                           pending_txid_challenge_i, 
                                           accepted_txid_challenge_i, 
                                           accepted_txid_ack_i, 
@@ -3232,7 +3134,6 @@ DiggingLoop(self) == /\ pc[self] = "DiggingLoop"
                      /\ UNCHANGED << mystery_i, used_sessions, 
                                      completed_withdrawals, session_id, tx_id, 
                                      psbt_i, signed_psbt_i, 
-                                     local_psbt_reviewed_i, 
                                      pending_txid_challenge_i, 
                                      accepted_txid_challenge_i, 
                                      accepted_txid_ack_i, 
@@ -3295,7 +3196,7 @@ ReadyToSign(self) == /\ pc[self] = "ReadyToSign"
                                      completed_withdrawals, session_id, tx_id, 
                                      current_placeholder_i, placeholder_owner, 
                                      placeholder_kind, psbt_i, hydrated_psbt_i, 
-                                     signing_ticket_i, local_psbt_reviewed_i, 
+                                     signing_ticket_i, 
                                      pending_txid_challenge_i, 
                                      accepted_txid_challenge_i, 
                                      accepted_txid_ack_i, 
@@ -3364,7 +3265,6 @@ AwaitBroadcast(self) == /\ pc[self] = "AwaitBroadcast"
                                         placeholder_owner, placeholder_kind, 
                                         psbt_i, hydrated_psbt_i, signed_psbt_i, 
                                         signing_ticket_i, 
-                                        local_psbt_reviewed_i, 
                                         pending_txid_challenge_i, 
                                         accepted_txid_challenge_i, 
                                         accepted_txid_ack_i, 
@@ -3427,7 +3327,6 @@ AfterSession(self) == /\ pc[self] = "AfterSession"
                                                  hydrated_psbt_i, 
                                                  signed_psbt_i, 
                                                  signing_ticket_i, 
-                                                 local_psbt_reviewed_i, 
                                                  pending_txid_challenge_i, 
                                                  accepted_txid_challenge_i, 
                                                  accepted_txid_ack_i, 
@@ -3475,7 +3374,6 @@ AfterSession(self) == /\ pc[self] = "AfterSession"
                                       /\ hydrated_psbt_i' = [hydrated_psbt_i EXCEPT ![self] = NoPsbt]
                                       /\ signed_psbt_i' = [signed_psbt_i EXCEPT ![self] = NoPsbt]
                                       /\ signing_ticket_i' = [signing_ticket_i EXCEPT ![self] = NoMessage]
-                                      /\ local_psbt_reviewed_i' = [local_psbt_reviewed_i EXCEPT ![self] = FALSE]
                                       /\ pending_txid_challenge_i' = [pending_txid_challenge_i EXCEPT ![self] = NoMessage]
                                       /\ accepted_txid_challenge_i' = [accepted_txid_challenge_i EXCEPT ![self] = NoMessage]
                                       /\ accepted_txid_ack_i' = [accepted_txid_ack_i EXCEPT ![self] = NoMessage]
@@ -3541,7 +3439,6 @@ AfterSession(self) == /\ pc[self] = "AfterSession"
                                       most_work_bitcoin_block_height >>
 
 Peer(self) == PeerSessionLoop(self) \/ ActiveReady(self)
-                 \/ AwaitNonInitiatorLocalApproval(self)
                  \/ AwaitInitialTxIdAck(self)
                  \/ AwaitApprovalCollection(self)
                  \/ AwaitInitialDuressAck(self) \/ AfterInitialDuress(self)
@@ -3557,7 +3454,6 @@ WatchtowerSessionLoop == /\ pc[WT_ID] = "WatchtowerSessionLoop"
                                          placeholder_owner, placeholder_kind, 
                                          psbt_i, hydrated_psbt_i, 
                                          signed_psbt_i, signing_ticket_i, 
-                                         local_psbt_reviewed_i, 
                                          pending_txid_challenge_i, 
                                          accepted_txid_challenge_i, 
                                          accepted_txid_ack_i, 
@@ -3649,7 +3545,6 @@ AwaitInitiatorApproval == /\ pc[WT_ID] = "AwaitInitiatorApproval"
                                           placeholder_owner, placeholder_kind, 
                                           psbt_i, hydrated_psbt_i, 
                                           signed_psbt_i, signing_ticket_i, 
-                                          local_psbt_reviewed_i, 
                                           pending_txid_challenge_i, 
                                           accepted_txid_challenge_i, 
                                           accepted_txid_ack_i, 
@@ -3710,10 +3605,12 @@ CollectPeerApprovals == /\ pc[WT_ID] = "CollectPeerApprovals"
                                                           /\ ValidSig(approval_outbox[p], p)
                                                           /\ approval_outbox[p].sid = session_id
                                                           /\ approval_outbox[p].txid = tx_id
-                                                          /\ PostWTApprovalWindowValid(
+                                                          /\ ApprovalFreshAtWT(
                                                               approval_outbox[p],
-                                                              wt_tx_approval,
-                                                              most_work_bitcoin_block_height)}:
+                                                              most_work_bitcoin_block_height)
+                                                          /\ ApprovalFreshRelative(
+                                                              approval_outbox[p],
+                                                              wt_tx_approval.height)}:
                                               /\ peer_tx_approval_collection' = [peer_tx_approval_collection EXCEPT ![i] = approval_outbox[i]]
                                               /\ wt_accepted_approval' = [wt_accepted_approval EXCEPT ![i] = approval_outbox[i]]
                                               /\ wt_accepted_approval_height' = [wt_accepted_approval_height EXCEPT ![i] = most_work_bitcoin_block_height]
@@ -3738,7 +3635,6 @@ CollectPeerApprovals == /\ pc[WT_ID] = "CollectPeerApprovals"
                                         placeholder_owner, placeholder_kind, 
                                         psbt_i, hydrated_psbt_i, signed_psbt_i, 
                                         signing_ticket_i, 
-                                        local_psbt_reviewed_i, 
                                         pending_txid_challenge_i, 
                                         accepted_txid_challenge_i, 
                                         accepted_txid_ack_i, 
@@ -3863,7 +3759,7 @@ CollectCommitments == /\ pc[WT_ID] = "CollectCommitments"
                                       current_placeholder_i, placeholder_owner, 
                                       placeholder_kind, psbt_i, 
                                       hydrated_psbt_i, signed_psbt_i, 
-                                      signing_ticket_i, local_psbt_reviewed_i, 
+                                      signing_ticket_i, 
                                       pending_txid_challenge_i, 
                                       accepted_txid_challenge_i, 
                                       accepted_txid_ack_i, 
@@ -3981,7 +3877,6 @@ CollectPings == /\ pc[WT_ID] = "CollectPings"
                                 current_placeholder_i, placeholder_owner, 
                                 placeholder_kind, psbt_i, hydrated_psbt_i, 
                                 signed_psbt_i, signing_ticket_i, 
-                                local_psbt_reviewed_i, 
                                 pending_txid_challenge_i, 
                                 accepted_txid_challenge_i, accepted_txid_ack_i, 
                                 accepted_txid_ack_height_i, 
@@ -4054,7 +3949,6 @@ CollectSignatures == /\ pc[WT_ID] = "CollectSignatures"
                                      current_placeholder_i, placeholder_owner, 
                                      placeholder_kind, psbt_i, hydrated_psbt_i, 
                                      signed_psbt_i, signing_ticket_i, 
-                                     local_psbt_reviewed_i, 
                                      pending_txid_challenge_i, 
                                      accepted_txid_challenge_i, 
                                      accepted_txid_ack_i, 
@@ -4155,9 +4049,9 @@ ResetAfterBroadcast == /\ pc[WT_ID] = "ResetAfterBroadcast"
                        /\ UNCHANGED << mystery_i, current_placeholder_i, 
                                        placeholder_owner, placeholder_kind, 
                                        psbt_i, hydrated_psbt_i, signed_psbt_i, 
-                                       signing_ticket_i, local_psbt_reviewed_i, 
-                                       peer_state, payload_kind_i, 
-                                       duress_latched_i, duress_checks_i, 
+                                       signing_ticket_i, peer_state, 
+                                       payload_kind_i, duress_latched_i, 
+                                       duress_checks_i, 
                                        sar_seen_placeholder_ids_i, 
                                        peer_reviewed_ping_history_i, counter_i, 
                                        ping_seq_num_i, reached_mystery_flag_i, 
@@ -4201,9 +4095,8 @@ AckLoop == /\ pc[SAR_ID] = "AckLoop"
                            session_id, tx_id, current_placeholder_i, 
                            placeholder_owner, placeholder_kind, psbt_i, 
                            hydrated_psbt_i, signed_psbt_i, signing_ticket_i, 
-                           local_psbt_reviewed_i, pending_txid_challenge_i, 
-                           accepted_txid_challenge_i, accepted_txid_ack_i, 
-                           accepted_txid_ack_height_i, 
+                           pending_txid_challenge_i, accepted_txid_challenge_i, 
+                           accepted_txid_ack_i, accepted_txid_ack_height_i, 
                            pending_duress_challenge_i, 
                            accepted_duress_challenge_i, accepted_duress_ack_i, 
                            accepted_duress_ack_height_i, 
@@ -4260,7 +4153,6 @@ FallbackLoop == /\ pc["FALLBACK"] = "FallbackLoop"
                                 current_placeholder_i, placeholder_owner, 
                                 placeholder_kind, psbt_i, hydrated_psbt_i, 
                                 signed_psbt_i, signing_ticket_i, 
-                                local_psbt_reviewed_i, 
                                 pending_txid_challenge_i, 
                                 accepted_txid_challenge_i, accepted_txid_ack_i, 
                                 accepted_txid_ack_height_i, 
@@ -4319,7 +4211,6 @@ AdvanceHeights == /\ pc["ENV"] = "AdvanceHeights"
                                   current_placeholder_i, placeholder_owner, 
                                   placeholder_kind, psbt_i, hydrated_psbt_i, 
                                   signed_psbt_i, signing_ticket_i, 
-                                  local_psbt_reviewed_i, 
                                   pending_txid_challenge_i, 
                                   accepted_txid_challenge_i, 
                                   accepted_txid_ack_i, 
