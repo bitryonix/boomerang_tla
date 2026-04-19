@@ -1,0 +1,146 @@
+# Core Model Guide
+
+<a id="table-of-contents"></a>
+
+## Table of Contents
+
+- [Purpose](#purpose)
+- [What This File Covers](#what-this-file-covers)
+- [Hardening Decisions](#hardening-decisions)
+- [Line-By-Line Guide](#line-by-line-guide)
+- [How To Read It Manually](#how-to-read-it-manually)
+- [Verification](#verification)
+- [Notes](#notes)
+
+<a id="purpose"></a>
+## Purpose
+
+[Back to TOC](#table-of-contents)
+
+[`withdrawal_spec/BoomerangWithdrawalCore.tla`](BoomerangWithdrawalCore.tla) is the current main withdrawal
+model in the active Boomerang withdrawal proof effort. It is still a work in
+progress rather than a finished end-to-end proof artifact.
+
+It keeps the repo scoped to:
+
+- post-setup withdrawal only
+- one active withdrawal session at a time
+- PlusCal-first protocol structure
+- abstract fallback boundary instead of a full fallback spend ceremony
+- abstract signing-ticket binding instead of a full MuSig2 transcript
+
+<a id="what-this-file-covers"></a>
+## What This File Covers
+
+[Back to TOC](#table-of-contents)
+
+The model covers:
+
+- milestone-gated initiator start
+- `session_id` and `tx_id` freezing during an active withdrawal
+- explicit non-initiator local PSBT review before the ST-mediated `tx_id` confirmation path begins
+- approval emission only after a matching accepted `tx_id` transcript
+- explicit per-peer verification of the WT-signed initiator commit before any non-initiator emits its own commit
+- initial and recurrent duress resolution only through matching accepted nonce-bound transcripts
+- commit collection with exact placeholder-instance SAR acknowledgements
+- WT-coordinated ping/pong rounds with stronger seq and block-distance checks
+- all-reached transition to signing readiness
+- role-specific approval-window validation for initiator and non-initiator approvals
+- explicit sender-field consistency across accepted approvals, commits, bundles, and pings
+- signing-ticket binding across hydration, signed export, and WT broadcast
+- post-broadcast cleanup and `mystery` regeneration
+- fallback as a separate boundary condition
+
+It intentionally does not fully model:
+
+- setup
+- concurrent withdrawals
+- the full deterministic fallback ceremony
+- the full MuSig2 signing transcript
+- real Bitcoin mempool/mining semantics
+- off-protocol SAR rescue operations
+
+<a id="hardening-decisions"></a>
+## Hardening Decisions
+
+[Back to TOC](#table-of-contents)
+
+The important proof-boundary choices in this file are:
+
+- placeholder instances are opaque identities, not plaintext payload tokens
+- SAR is modeled as single per peer
+- ST/Boomlet freshness is represented by exact transcript binding on `{sid, tx_id, peer, stage, seq, nonce}`
+- recurring duress follows the documented modulo-gated PRNG rule, with an abstract bounded draw domain because the design docs do not canonically define PRNG state
+- the literal country-grid challenge content is still abstracted to symbolic `consent_match`
+- PSBT satisfiability is still abstracted rather than modeled as executable state
+- explicit peer-id set membership remains abstracted by the finite `Peers` set and fixed `INITIATOR`
+- replay suppression is per peer over placeholder-instance memory
+- freshness witnesses are recorded at acceptance time
+- WT↔SAR transport is abstracted semantically here; explicit WT/SAR wire hops live in the wire model
+- signing is bound by a lightweight signing ticket
+- sequential withdrawals are allowed only through explicit reset after successful broadcast
+- fairness-backed liveness is separated from the default safety `Spec`
+
+That signing-ticket boundary is intentional for the current deliverable. It is a documented proof-scope limit, not an accidental omission hidden inside the current model.
+
+<a id="line-by-line-guide"></a>
+## Line-By-Line Guide
+
+[Back to TOC](#table-of-contents)
+
+| Section | Purpose |
+| --- | --- |
+| Header and domains | Module header, constants, assumptions, and shared domains. This is where `ChallengeNonces`, `DURESS_CHECK_INTERVAL_IN_BLOCKS`, the nonce-aware peer states, and the symbolic duress stages enter the model. |
+| TLC helpers | Constant-binding helpers used by the curated cfgs, including the bounded recurring-duress draw surface. |
+| Message constructors | Symbolic constructors for approvals, bundles, commits, SAR acknowledgements, pings, pongs, signed PSBTs, broadcasts, and the explicit ST/Boomlet transcript records. |
+| Structural helpers | Matching, freshness, replay, digging-game, and well-formedness helpers, including the role-specific approval-window operators. |
+| PlusCal algorithm | Variables and processes. This is where the peer-local `AwaitingNonInitiatorLocalApproval`, `AwaitingInitialTxIdAck`, `AwaitingInitialDuressAck`, and `AwaitingRecurringDuressAck` substates live, along with post-broadcast reset. |
+| Generated translation | The `\* BEGIN TRANSLATION` to `\* END TRANSLATION` block regenerated by `pcal.trans`. |
+| Safety layer | Post-translation state predicates and safety invariants, including freshness witnesses, sender-field checks, signing-ticket invariants, and deadlock classification support. |
+| Temporal layer | History properties and fairness-backed liveness operators, including `SpecWithFairness`. |
+
+<a id="how-to-read-it-manually"></a>
+## How To Read It Manually
+
+[Back to TOC](#table-of-contents)
+
+Use this order:
+
+1. Read the constants, assumptions, and shared domains section for the state vocabulary.
+2. Read the message and helper operators after that opening section.
+3. Read the PlusCal algorithm beginning at `(*--algorithm WithdrawalMerged`.
+4. Treat the `\* BEGIN TRANSLATION` block as generated executable form.
+5. Read the safety properties after the translation block.
+6. Finish with the temporal and liveness operators at the end of the module.
+
+<a id="verification"></a>
+## Verification
+
+[Back to TOC](#table-of-contents)
+
+The maintained verification command list lives in [`withdrawal_spec/README.md`](README.md).
+
+When verifying this specific module, check:
+
+- `pcal.trans` only changes the `\* BEGIN TRANSLATION` to
+  `\* END TRANSLATION` block, plus the translator byproduct
+  [`withdrawal_spec/BoomerangWithdrawalCore.cfg`](BoomerangWithdrawalCore.cfg)
+- `tla2sany.SANY` completes without unknown operators, malformed records, or
+  domain errors
+- [`MC_BoomerangWithdrawalCore_safety.cfg`](MC_BoomerangWithdrawalCore_safety.cfg) preserves the strengthened
+  placeholder, nonce-transcript, non-initiator local-review, initiator-commit,
+  reached-ping, sender-field, freshness, and signing-ticket properties
+- [`MC_BoomerangWithdrawalCore_sanity.cfg`](MC_BoomerangWithdrawalCore_sanity.cfg) preserves the same safety properties
+  and the monotone history operators
+- the deadlock, 5-peer, and liveness harnesses behave according to their scoped
+  purpose rather than surfacing a new cardinality or service-progress regression
+
+<a id="notes"></a>
+## Notes
+
+[Back to TOC](#table-of-contents)
+
+- `ObservableEnvelopeConsistentUnderPrivateDuress` is intentionally narrower than a full privacy proof.
+- `Spec` is safety-only. `SpecWithFairness` is the separate fairness-backed liveness surface.
+- The reset logic is for sequential withdrawals only. The model still assumes a single active withdrawal at a time.
+- The design docs are explicit that recurring duress fires when a pseudo-random draw is divisible by `DURESS_CHECK_INTERVAL_IN_BLOCKS`; what remains open is the concrete PRNG source/state, not the modulo guard itself.

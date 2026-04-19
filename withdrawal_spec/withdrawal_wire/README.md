@@ -1,10 +1,36 @@
-# `BoomerangWithdrawalWire.tla` Guide
+# Wire Model Guide
 
+<a id="table-of-contents"></a>
+
+## Table of Contents
+
+- [Purpose](#purpose)
+- [Shape Of The Model](#shape-of-the-model)
+- [Actor Ownership](#actor-ownership)
+- [Canonical Step Mapping](#canonical-step-mapping)
+- [Wire Surface Audit](#wire-surface-audit)
+- [Bounded TLC Surface](#bounded-tlc-surface)
+- [Structural Checks](#structural-checks)
+- [Verification](#verification)
+- [Current Invariants](#current-invariants)
+- [Remaining Design Ambiguity](#remaining-design-ambiguity)
+
+<a id="purpose"></a>
 ## Purpose
 
-`spec/withdrawal_wire/BoomerangWithdrawalWire.tla` is the withdrawal-only wire model derived directly from the canonical withdrawal sources in `BD.zip`. WORK IN PROGRESS.
+[Back to TOC](#table-of-contents)
 
-Source priority:
+[`withdrawal_spec/withdrawal_wire/BoomerangWithdrawalWire.tla`](BoomerangWithdrawalWire.tla) is the
+withdrawal-only wire model derived directly from the canonical withdrawal
+sources in the external `boomerang_design` repository.
+
+It now also carries a bounded curated TLC surface so the wire-faithful model can be regression-checked in the repository.
+
+The upstream source files below are not part of this repository; they describe
+the external design corpus in the `boomerang_design` repository that this model
+was derived from.
+
+Upstream source priority:
 
 1. `withdrawal/README.md`
 2. `withdrawal/initiator_withdrawal_diagram_without_states.puml`
@@ -12,7 +38,10 @@ Source priority:
 4. `setup/README.md` only for inherited post-setup state
 5. `SPEC.md` only when the withdrawal sources are silent
 
+<a id="shape-of-the-model"></a>
 ## Shape Of The Model
+
+[Back to TOC](#table-of-contents)
 
 - post-setup only
 - one active 5-peer withdrawal
@@ -28,9 +57,14 @@ Source priority:
 - explicit actor-to-actor mailboxes for every diagram edge
 - exact canonical wrapper names on actor hops
 - symbolic `SignatureOnMessage`, `EncryptedFor`, `PaddedMessage`, `Collection`, and `MessageWithNonce` layers
+- bounded `DuressValues == 1..DURESS_VALUE_CARDINALITY` for curated TLC runs
+- recurring duress gated by the documented modulo-trigger rule over an abstract bounded PRNG-draw domain
 - no peer-facing `WTBroadcast`
 
+<a id="actor-ownership"></a>
 ## Actor Ownership
+
+[Back to TOC](#table-of-contents)
 
 - `User_i` owns PSBT agreement, ST acknowledgements, duress index choice, and Iso-connect intent.
 - `Niso_i` owns only relay-visible state: saved PSBT/tx id, local event height, reached collection, and hydrated PSBT.
@@ -40,7 +74,10 @@ Source priority:
 - `SAR_i` owns seen placeholder IVs and rescue/doxing artifacts.
 - `WT` owns approval, commit, ping, reply, signed-fragment, and final relay state.
 
+<a id="canonical-step-mapping"></a>
 ## Canonical Step Mapping
+
+[Back to TOC](#table-of-contents)
 
 This is a process-level correspondence checklist rather than a line-by-line changelog.
 
@@ -86,7 +123,10 @@ This is a process-level correspondence checklist rather than a line-by-line chan
   - `NisoFlow` forwards `WithdrawalNisoWtMessage5`
   - `Watchtower` aggregates signed fragments and sets the terminal relay artifact `wt_broadcast`
 
+<a id="wire-surface-audit"></a>
 ## Wire Surface Audit
+
+[Back to TOC](#table-of-contents)
 
 The model keeps the wire surface constrained to canonical diagram wrapper names:
 
@@ -94,7 +134,24 @@ The model keeps the wire surface constrained to canonical diagram wrapper names:
 - `WireSurfaceOnlyCanonical` checks every hop in `wire_trace`.
 - `NoExtraWTHops` rules out WT-to-User fanout and any synthetic `WTBroadcast`.
 
+<a id="bounded-tlc-surface"></a>
+## Bounded TLC Surface
+
+[Back to TOC](#table-of-contents)
+
+The wire model keeps the design's 5-peer and 5-column shape, but the curated TLC harness binds:
+
+- `DURESS_VALUE_CARDINALITY = 2`
+- `DURESS_CHECK_INTERVAL_IN_BLOCKS = 2`
+- alternating consent-set values through `ModelInitConsentSetAlternating`
+- distinct doxing-key values through `ModelInitDoxingKeyDistinct`
+
+This keeps the wire surface tractable for TLC without changing the actor topology or wrapper-level control flow.
+
+<a id="structural-checks"></a>
 ## Structural Checks
+
+[Back to TOC](#table-of-contents)
 
 The module exposes view operators intended for future hostile-`Niso` work:
 
@@ -104,19 +161,43 @@ The module exposes view operators intended for future hostile-`Niso` work:
 
 These are observational only in this version; the model still assumes honest behavior from all processes.
 
+The module also now exposes:
+
+- `IsSafePaddingPlaintextForPeer(peer, plaintext)` so SAR can recognize any honest safe placeholder for that peer regardless of `stage` or `seq`
+- `RecurringDuressPRNGDraws` / `RecurringDuressCheckFires(...)` so the recurring-check branch follows the design’s modulo rule instead of a free Boolean choice
+- `SARDoxingIdentifiersExcludeSafePadding` to guard the SAR regression surface directly
+
+<a id="verification"></a>
 ## Verification
 
-Run these from the repository root:
+[Back to TOC](#table-of-contents)
 
-```bash
-java -cp tools/tla2tools.jar pcal.trans spec/withdrawal_wire/BoomerangWithdrawalWire.tla
-java -cp tools/tla2tools.jar tla2sany.SANY spec/withdrawal_wire/BoomerangWithdrawalWire.tla
-```
+The maintained verification command list lives in [`withdrawal_spec/README.md`](../README.md).
 
+When verifying this specific module, check:
+
+- `pcal.trans` regenerates the translation and any translator byproduct changes
+  stay confined to [`withdrawal_spec/withdrawal_wire/BoomerangWithdrawalWire.cfg`](BoomerangWithdrawalWire.cfg)
+- `tla2sany.SANY` completes without malformed wrapper/domain errors
+- [`MC_BoomerangWithdrawalWire_safety.cfg`](MC_BoomerangWithdrawalWire_safety.cfg) preserves the canonical wire surface,
+  committed-tx consistency, hydrated-PSBT consistency, WT relay gating, and SAR
+  safe-padding exclusion properties
+
+<a id="current-invariants"></a>
 ## Current Invariants
+
+[Back to TOC](#table-of-contents)
 
 - `WireSurfaceOnlyCanonical`
 - `NoExtraWTHops`
 - `CommittedTxConsistent`
 - `HydratedPsbtPreservesCommittedTx`
 - `WTRelayRequiresAllSigned`
+- `SARDoxingIdentifiersExcludeSafePadding`
+
+<a id="remaining-design-ambiguity"></a>
+## Remaining Design Ambiguity
+
+[Back to TOC](#table-of-contents)
+
+The design corpus is clear that repeated duress checks are triggered by a pseudo-random draw whose modulo against `DURESS_CHECK_INTERVAL_IN_BLOCKS` is zero. What it still does not define canonically is the PRNG source, seed/state persistence, or whether each peer must maintain an independently auditable PRNG stream. The wire model now implements the modulo rule directly and leaves that narrower generator question as an explicit proof-boundary assumption.

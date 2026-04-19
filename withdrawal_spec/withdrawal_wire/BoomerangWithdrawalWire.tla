@@ -32,6 +32,7 @@ CONSTANTS
     InitMystery,
     TxOfPsbt,
     Milestone0,
+    DURESS_VALUE_CARDINALITY,
     DURESS_CHECK_INTERVAL_IN_BLOCKS,
     TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT,
     TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_WT_TX_APPROVAL_BY_NON_INITIATOR_PEERS,
@@ -62,7 +63,9 @@ ASSUME
     /\ TXIDs # {}
     /\ TxOfPsbt \in [PSBTs -> TXIDs]
     /\ InitDoxingKey \in [Peers -> STRING]
-    /\ InitConsentSet \in [Peers -> [1..5 -> 1..195]]
+    /\ DURESS_VALUE_CARDINALITY \in Nat
+    /\ DURESS_VALUE_CARDINALITY >= 2
+    /\ InitConsentSet \in [Peers -> [1..5 -> 1..DURESS_VALUE_CARDINALITY]]
     /\ InitMystery \in [Peers -> Nat]
     /\ \A i \in Peers : InitMystery[i] > 0
     /\ Milestone0 \in Nat
@@ -92,6 +95,37 @@ CanonicalPsbt ==
 
 CanonicalTxId ==
     TxOfPsbt[CanonicalPsbt]
+
+DuressValues ==
+    1..DURESS_VALUE_CARDINALITY
+
+RecurringDuressPRNGDraws ==
+    0..((2 * DURESS_CHECK_INTERVAL_IN_BLOCKS) - 1)
+
+RecurringDuressCheckFires(draw) ==
+    /\ draw \in RecurringDuressPRNGDraws
+    /\ draw % DURESS_CHECK_INTERVAL_IN_BLOCKS = 0
+
+FirstDuressValue ==
+    CHOOSE v \in DuressValues : TRUE
+
+SecondDuressValue ==
+    CHOOSE v \in (DuressValues \ {FirstDuressValue}) : TRUE
+
+ModelInitDoxingKeyDistinct ==
+    CHOOSE f \in [Peers -> {"DK0", "DK1", "DK2", "DK3", "DK4"}] :
+        \A p, q \in Peers : p # q => f[p] # f[q]
+
+ModelInitConsentSetAlternating ==
+    [ p \in Peers |->
+        [ c \in 1..5 |->
+            IF c \in {1, 3, 5} THEN FirstDuressValue ELSE SecondDuressValue ] ]
+
+ModelInitMysterySmall ==
+    [ p \in Peers |-> 1 ]
+
+ModelTxOfPsbtSingle ==
+    [ p \in PSBTs |-> CHOOSE t \in TXIDs : TRUE ]
 
 NonInitiators ==
     Peers \ {INITIATOR}
@@ -178,10 +212,15 @@ SafePaddingPlaintext(peer, stage, seq) ==
       stage |-> stage,
       seq   |-> seq ]
 
+IsSafePaddingPlaintextForPeer(peer, plaintext) ==
+    /\ plaintext # NoValue
+    /\ plaintext.kind = "SafePaddingPlaintext"
+    /\ plaintext.peer = peer
+
 DuressColumnValueFunctions ==
-    { values \in [1..195 -> 1..195] :
-        \A value \in 1..195 :
-            \E index \in 1..195 : values[index] = value }
+    { values \in [DuressValues -> DuressValues] :
+        \A value \in DuressValues :
+            \E index \in DuressValues : values[index] = value }
 
 MakeDuressCheckSpace(peer, stage, seq, spaceMap) ==
     [ kind  |-> "DuressCheckSpace",
@@ -202,7 +241,7 @@ DuressSignalIndex(peer, stage, seq, selectedIndices) ==
       selected_indices |-> selectedIndices ]
 
 IndexOfValueInSpace(space, column, value) ==
-    CHOOSE index \in 1..195 : space.space[column][index] = value
+    CHOOSE index \in DuressValues : space.space[column][index] = value
 
 BuildDuressSignalIndex(space, honest, consentSet) ==
     DuressSignalIndex(
@@ -212,7 +251,7 @@ BuildDuressSignalIndex(space, honest, consentSet) ==
         [column \in 1..5 |->
             IF honest
             THEN IndexOfValueInSpace(space, column, consentSet[column])
-            ELSE CHOOSE index \in 1..195 : space.space[column][index] # consentSet[column]])
+            ELSE CHOOSE index \in DuressValues : space.space[column][index] # consentSet[column]])
 
 DuressSignalIndexMatchesSpace(space, signalIndex) ==
     /\ space.kind = "DuressCheckSpace"
@@ -220,7 +259,7 @@ DuressSignalIndexMatchesSpace(space, signalIndex) ==
     /\ signalIndex.peer = space.peer
     /\ signalIndex.stage = space.stage
     /\ signalIndex.seq = space.seq
-    /\ signalIndex.selected_indices \in [1..5 -> 1..195]
+    /\ signalIndex.selected_indices \in [1..5 -> DuressValues]
 
 DerivedDuressSignal(space, signalIndex) ==
     [column \in 1..5 |-> space.space[column][signalIndex.selected_indices[column]]]
@@ -230,6 +269,12 @@ FreshWithin(sentHeight, observedHeight, tolerance) ==
     /\ observedHeight \in Nat
     /\ sentHeight <= observedHeight
     /\ observedHeight <= sentHeight + tolerance
+
+Max2(a, b) ==
+    IF a >= b THEN a ELSE b
+
+Min2(a, b) ==
+    IF a <= b THEN a ELSE b
 
 BasePsbtOf(psbtLike) ==
     IF psbtLike = NoValue
@@ -475,6 +520,13 @@ CommitSigValid(sig, peer, txid, lower, upper) ==
 WTSignedCommitValid(sig, peer, txid, lower, upper) ==
     /\ ValidSig(sig, WTActor)
     /\ CommitSigValid(SignedContent(sig), peer, txid, lower, upper)
+
+ReachedPingSigValid(sig, peer, txid) ==
+    /\ ValidSig(sig, BoomletActor(peer))
+    /\ SignedContent(sig).kind = "Ping"
+    /\ SignedContent(sig).magic = "ping"
+    /\ SignedContent(sig).tx_id = txid
+    /\ SignedContent(sig).reached_mystery_flag
 
 PingSigValid(sig, peer, txid, lower, upper) ==
     /\ ValidSig(sig, BoomletActor(peer))
@@ -1012,6 +1064,7 @@ variables
     niso_saved_tx_id_i = [i \in Peers |-> NoValue],
     niso_event_block_height_i = [i \in Peers |-> Milestone0],
     niso_initiator_peer_id_i = [i \in Peers |-> NoValue],
+    niso_saved_wt_tx_approval_i = [i \in Peers |-> NoValue],
     niso_hydrated_psbt_i = [i \in Peers |-> NoValue],
     niso_reached_pings_collection_i = [i \in Peers |-> NoValue],
 
@@ -1066,6 +1119,8 @@ variables
     wt_last_accepted_ping_i = [i \in Peers |-> NoValue],
     wt_reached_pings_collection = [i \in Peers |-> NoValue],
     wt_last_pong_height = NoValue,
+    wt_relayed_all_approvals = FALSE,
+    wt_relayed_all_commits = FALSE,
     wt_signed_psbt_i = [i \in Peers |-> NoValue],
     wt_broadcast = NoValue,
 
@@ -1377,8 +1432,18 @@ NisoLoop:
                 most_work_bitcoin_block_height);
             assert ValidSig(approvalSig, BoomletActor(INITIATOR));
             assert SignedContent(wtSig).initiator_id \in peer_id_collection;
+            assert SignedContent(approvalSig).magic = "approved";
+            assert SignedContent(wtSig).magic = "approved";
+            assert SignedContent(approvalSig).tx_id = SignedContent(wtSig).tx_id;
+            assert SignedContent(wtSig).event_block_height >=
+                Max2(
+                    SignedContent(approvalSig).event_block_height,
+                    IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_WT_TX_APPROVAL_BY_NON_INITIATOR_PEERS
+                    THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_WT_TX_APPROVAL_BY_NON_INITIATOR_PEERS
+                    ELSE 0);
             niso_saved_tx_id_i[self] := SignedContent(wtSig).tx_id;
             niso_initiator_peer_id_i[self] := SignedContent(wtSig).initiator_id;
+            niso_saved_wt_tx_approval_i[self] := wtSig;
             niso_event_block_height_i[self] := most_work_bitcoin_block_height;
             assert most_work_bitcoin_block_height >= boomerang_descriptor.milestone_block_0;
             assert niso_to_boomlet[self] = NoValue;
@@ -1401,19 +1466,74 @@ NisoLoop:
                 INITIATOR,
                 SignedContent(msg.all_peer_tx_approvals[INITIATOR]).event_block_height,
                 most_work_bitcoin_block_height);
+            assert ValidSig(msg.all_peer_tx_approvals[INITIATOR], BoomletActor(INITIATOR));
+            assert SignedContent(msg.all_peer_tx_approvals[INITIATOR]).magic = "approved";
+            assert SignedContent(msg.all_peer_tx_approvals[INITIATOR]).tx_id = niso_saved_tx_id_i[self];
+            assert SignedContent(wtSig).magic = "approved";
+            assert SignedContent(wtSig).tx_id = niso_saved_tx_id_i[self];
+            assert SignedContent(wtSig).event_block_height >= SignedContent(msg.all_peer_tx_approvals[INITIATOR]).event_block_height;
+            assert SignedContent(wtSig).event_block_height <=
+                Min2(
+                    SignedContent(msg.all_peer_tx_approvals[INITIATOR]).event_block_height
+                        + TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT,
+                    most_work_bitcoin_block_height);
+            assert SignedContent(msg.all_peer_tx_approvals[INITIATOR]).event_block_height >=
+                Max2(
+                    IF SignedContent(wtSig).event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                    THEN SignedContent(wtSig).event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                    ELSE 0,
+                    IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                    THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                    ELSE 0);
+            assert SignedContent(msg.all_peer_tx_approvals[INITIATOR]).event_block_height <= SignedContent(wtSig).event_block_height;
+            assert most_work_bitcoin_block_height >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER;
+            assert \A j \in NonInitiators :
+                /\ ValidSig(msg.all_peer_tx_approvals[j], BoomletActor(j))
+                /\ SignedContent(msg.all_peer_tx_approvals[j]).magic = "approved"
+                /\ SignedContent(msg.all_peer_tx_approvals[j]).tx_id = niso_saved_tx_id_i[self]
+                /\ SignedContent(msg.all_peer_tx_approvals[j]).event_block_height >=
+                    Max2(
+                        SignedContent(wtSig).event_block_height,
+                        IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                        THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                        ELSE 0)
+                /\ SignedContent(msg.all_peer_tx_approvals[j]).event_block_height <=
+                    most_work_bitcoin_block_height
+                        - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER;
+            niso_saved_wt_tx_approval_i[self] := wtSig;
             niso_event_block_height_i[self] := most_work_bitcoin_block_height;
             assert niso_to_boomlet[self] = NoValue;
             niso_to_boomlet[self] := WithdrawalNisoBoomletMessage3(
-                msg.all_peer_tx_approvals,
+                [j \in NonInitiators |-> msg.all_peer_tx_approvals[j]],
                 wtSig,
                 niso_event_block_height_i[self]);
             wire_trace := wire_trace \cup
                 { WireHop(NisoActor(self), BoomletActor(self), WithdrawalNisoBoomletMessage3(
-                    msg.all_peer_tx_approvals,
+                    [j \in NonInitiators |-> msg.all_peer_tx_approvals[j]],
                     wtSig,
                     niso_event_block_height_i[self])) };
         elsif msg.kind = "WithdrawalWtNonInitiatorNisoMessage2" then
             niso_event_block_height_i[self] := most_work_bitcoin_block_height;
+            assert niso_saved_wt_tx_approval_i[self] # NoValue;
+            assert \A j \in NonInitiators :
+                /\ ValidSig(msg.non_initiator_tx_approvals[j], BoomletActor(j))
+                /\ SignedContent(msg.non_initiator_tx_approvals[j]).magic = "approved"
+                /\ SignedContent(msg.non_initiator_tx_approvals[j]).tx_id = niso_saved_tx_id_i[self]
+                /\ SignedContent(msg.non_initiator_tx_approvals[j]).event_block_height >=
+                    Max2(
+                        SignedContent(niso_saved_wt_tx_approval_i[self]).event_block_height,
+                        IF niso_event_block_height_i[self] >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                        THEN niso_event_block_height_i[self] - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                        ELSE 0)
+                /\ SignedContent(msg.non_initiator_tx_approvals[j]).event_block_height <=
+                    Min2(
+                        niso_event_block_height_i[self],
+                        SignedContent(niso_saved_wt_tx_approval_i[self]).event_block_height
+                            + TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS);
+            assert SignedContent(niso_saved_wt_tx_approval_i[self]).event_block_height >=
+                IF niso_event_block_height_i[self] >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                THEN niso_event_block_height_i[self] - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                ELSE 0;
             assert niso_to_boomlet[self] = NoValue;
             niso_to_boomlet[self] := WithdrawalNonInitiatorNisoBoomletMessage4(
                 msg.non_initiator_tx_approvals,
@@ -1439,6 +1559,17 @@ NisoLoop:
                 { WireHop(NisoActor(self), BoomletActor(self), WithdrawalNonInitiatorNisoBoomletMessage6(commitSig, niso_event_block_height_i[self])) };
         elsif msg.kind \in {"WithdrawalWtNisoMessage2", "WithdrawalWtNonInitiatorNisoMessage4"} then
             niso_event_block_height_i[self] := most_work_bitcoin_block_height;
+            assert niso_event_block_height_i[self] >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS;
+            assert \A j \in Peers :
+                WTSignedCommitValid(
+                    msg.all_peer_tx_commit_signed_by_boomlet_i_signed_by_wt[j],
+                    j,
+                    niso_saved_tx_id_i[self],
+                    IF niso_event_block_height_i[self] >= TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                    THEN niso_event_block_height_i[self] - TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                    ELSE 0,
+                    niso_event_block_height_i[self]
+                        - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS);
             assert niso_to_boomlet[self] = NoValue;
             niso_to_boomlet[self] := WithdrawalNisoBoomletMessage5(
                 msg.all_peer_tx_commit_signed_by_boomlet_i_signed_by_wt,
@@ -1464,6 +1595,8 @@ NisoLoop:
         else
             assert msg.kind = "WithdrawalWtNisoMessage4";
             assert msg.reached_pings_collection.kind = "ReachedPingsCollection";
+            assert \A j \in Peers :
+                ReachedPingSigValid(msg.reached_pings_collection.items[j], j, niso_saved_tx_id_i[self]);
             niso_reached_pings_collection_i[self] := msg.reached_pings_collection;
             niso_hydrated_psbt_i[self] := HydratePsbt(niso_saved_psbt_i[self]);
             assert niso_hydrated_psbt_i[self] # NoValue;
@@ -1517,12 +1650,35 @@ BoomletLoop:
             assert ValidSig(msg.wt_tx_approval_signed_by_wt, WTActor);
             assert ValidSig(msg.peer_0_tx_approval_signed_by_boomlet_0, BoomletActor(INITIATOR));
             assert SignedContent(msg.wt_tx_approval_signed_by_wt).initiator_id \in peer_id_collection;
+            assert SignedContent(msg.peer_0_tx_approval_signed_by_boomlet_0).magic = "approved";
+            assert SignedContent(msg.wt_tx_approval_signed_by_wt).magic = "approved";
             boomlet_saved_wt_tx_approval_i[self] := msg.wt_tx_approval_signed_by_wt;
             boomlet_signed_tx_approval_i[INITIATOR] := msg.peer_0_tx_approval_signed_by_boomlet_0;
             boomlet_saved_psbt_i[self] := Decrypt(msg.psbt_encrypted_by_boomlet_0_for_boomlet_i, BoomletActor(self));
             assert boomlet_saved_psbt_i[self] # NoValue;
             boomlet_committed_tx_id_i[self] := TxOfPsbt[boomlet_saved_psbt_i[self]];
             assert boomlet_committed_tx_id_i[self] = SignedContent(msg.peer_0_tx_approval_signed_by_boomlet_0).tx_id;
+            assert SignedContent(msg.wt_tx_approval_signed_by_wt).tx_id = boomlet_committed_tx_id_i[self];
+            assert SignedContent(msg.peer_0_tx_approval_signed_by_boomlet_0).event_block_height >=
+                IF SignedContent(msg.wt_tx_approval_signed_by_wt).event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                THEN SignedContent(msg.wt_tx_approval_signed_by_wt).event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                ELSE 0;
+            assert SignedContent(msg.peer_0_tx_approval_signed_by_boomlet_0).event_block_height <=
+                Min2(
+                    msg.niso_1_event_block_height,
+                    SignedContent(msg.wt_tx_approval_signed_by_wt).event_block_height);
+            assert SignedContent(msg.wt_tx_approval_signed_by_wt).event_block_height >=
+                Max2(
+                    SignedContent(msg.peer_0_tx_approval_signed_by_boomlet_0).event_block_height,
+                    IF msg.niso_1_event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_WT_TX_APPROVAL_BY_NON_INITIATOR_PEERS
+                    THEN msg.niso_1_event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_WT_TX_APPROVAL_BY_NON_INITIATOR_PEERS
+                    ELSE 0);
+            assert SignedContent(msg.wt_tx_approval_signed_by_wt).event_block_height <=
+                Min2(
+                    SignedContent(msg.peer_0_tx_approval_signed_by_boomlet_0).event_block_height
+                        + TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT,
+                    msg.niso_1_event_block_height);
+            assert msg.niso_1_event_block_height >= boomerang_descriptor.milestone_block_0;
             assert boomlet_to_niso[self] = NoValue;
             boomlet_to_niso[self] := WithdrawalNonInitiatorBoomletNisoMessage1(boomlet_saved_psbt_i[self]);
             wire_trace := wire_trace \cup
@@ -1545,6 +1701,38 @@ BoomletLoop:
                 { WireHop(BoomletActor(self), NisoActor(self), WithdrawalNonInitiatorBoomletNisoMessage3(
                     ApprovalCipherForWT(self, boomlet_committed_tx_id_i[self], msg.niso_1_event_block_height))) };
         elsif msg.kind = "WithdrawalNisoBoomletMessage3" then
+            assert ValidSig(msg.wt_tx_approval_signed_by_wt, WTActor);
+            assert SignedContent(msg.wt_tx_approval_signed_by_wt).magic = "approved";
+            assert SignedContent(msg.wt_tx_approval_signed_by_wt).tx_id = boomlet_committed_tx_id_i[self];
+            assert \A j \in NonInitiators :
+                /\ ValidSig(msg.all_peer_tx_approvals[j], BoomletActor(j))
+                /\ SignedContent(msg.all_peer_tx_approvals[j]).magic = "approved"
+                /\ SignedContent(msg.all_peer_tx_approvals[j]).tx_id = boomlet_committed_tx_id_i[self]
+                /\ SignedContent(msg.all_peer_tx_approvals[j]).event_block_height >=
+                    Max2(
+                        SignedContent(msg.wt_tx_approval_signed_by_wt).event_block_height,
+                        IF msg.niso_0_event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                        THEN msg.niso_0_event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                        ELSE 0)
+                /\ msg.niso_0_event_block_height >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                /\ SignedContent(msg.all_peer_tx_approvals[j]).event_block_height <=
+                    msg.niso_0_event_block_height
+                        - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER;
+            assert SignedContent(msg.wt_tx_approval_signed_by_wt).event_block_height >= SignedContent(boomlet_signed_tx_approval_i[self]).event_block_height;
+            assert SignedContent(msg.wt_tx_approval_signed_by_wt).event_block_height <=
+                Min2(
+                    SignedContent(boomlet_signed_tx_approval_i[self]).event_block_height
+                        + TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT,
+                    msg.niso_0_event_block_height);
+            assert SignedContent(boomlet_signed_tx_approval_i[self]).event_block_height >=
+                Max2(
+                    IF SignedContent(msg.wt_tx_approval_signed_by_wt).event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                    THEN SignedContent(msg.wt_tx_approval_signed_by_wt).event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                    ELSE 0,
+                    IF msg.niso_0_event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                    THEN msg.niso_0_event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                    ELSE 0);
+            assert SignedContent(boomlet_signed_tx_approval_i[self]).event_block_height <= SignedContent(msg.wt_tx_approval_signed_by_wt).event_block_height;
             boomlet_all_peer_approvals_i[self] := msg.all_peer_tx_approvals;
             boomlet_saved_wt_tx_approval_i[self] := msg.wt_tx_approval_signed_by_wt;
             boomlet_saved_duress_stage_i[self] := "initial";
@@ -1558,6 +1746,26 @@ BoomletLoop:
                     { WireHop(BoomletActor(self), NisoActor(self), WithdrawalBoomletNisoMessage3(DuressCheckCipher(space, boomlet_pending_duress_nonce_i[self]))) };
             end with;
         elsif msg.kind = "WithdrawalNonInitiatorNisoBoomletMessage4" then
+            assert boomlet_saved_wt_tx_approval_i[self] # NoValue;
+            assert \A j \in NonInitiators :
+                /\ ValidSig(msg.non_initiator_tx_approvals[j], BoomletActor(j))
+                /\ SignedContent(msg.non_initiator_tx_approvals[j]).magic = "approved"
+                /\ SignedContent(msg.non_initiator_tx_approvals[j]).tx_id = boomlet_committed_tx_id_i[self]
+                /\ SignedContent(msg.non_initiator_tx_approvals[j]).event_block_height >=
+                    Max2(
+                        SignedContent(boomlet_saved_wt_tx_approval_i[self]).event_block_height,
+                        IF msg.niso_1_event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                        THEN msg.niso_1_event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                        ELSE 0)
+                /\ SignedContent(msg.non_initiator_tx_approvals[j]).event_block_height <=
+                    Min2(
+                        msg.niso_1_event_block_height,
+                        SignedContent(boomlet_saved_wt_tx_approval_i[self]).event_block_height
+                            + TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS);
+            assert SignedContent(boomlet_saved_wt_tx_approval_i[self]).event_block_height >=
+                IF msg.niso_1_event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                THEN msg.niso_1_event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                ELSE 0;
             boomlet_all_peer_approvals_i[self] := msg.non_initiator_tx_approvals;
             boomlet_saved_duress_stage_i[self] := "initial";
             boomlet_saved_duress_seq_i[self] := 1;
@@ -1648,6 +1856,17 @@ BoomletLoop:
                         boomlet_duress_placeholder_cipher_i[self]))) };
         elsif msg.kind = "WithdrawalNisoBoomletMessage5" then
             assert SARReplyValidForPeer(self, boomlet_duress_placeholder_cipher_i[self], msg.duress_placeholder_signed_by_sar_encrypted_by_sar_for_boomlet);
+            assert msg.niso_0_event_block_height >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS;
+            assert \A j \in Peers :
+                WTSignedCommitValid(
+                    msg.all_peer_tx_commit_signed_by_boomlet_i_signed_by_wt[j],
+                    j,
+                    boomlet_committed_tx_id_i[self],
+                    IF msg.niso_0_event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                    THEN msg.niso_0_event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                    ELSE 0,
+                    msg.niso_0_event_block_height
+                        - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS);
             boomlet_commit_collection_i[self] := msg.all_peer_tx_commit_signed_by_boomlet_i_signed_by_wt;
             boomlet_counter_i[self] := 0;
             boomlet_ping_seq_num_i[self] := 0;
@@ -1702,8 +1921,8 @@ BoomletLoop:
                 end if;
             end if;
             boomlet_prev_pings_i[self] := prevPings;
-            with refresh \in BOOLEAN do
-                if refresh then
+            with prng_draw \in RecurringDuressPRNGDraws do
+                if RecurringDuressCheckFires(prng_draw) then
                     boomlet_saved_duress_stage_i[self] := "loop";
                     boomlet_saved_duress_seq_i[self] := boomlet_saved_duress_seq_i[self] + 1;
                     with space \in DuressCheckSpaces(self, "loop", boomlet_saved_duress_seq_i[self]) do
@@ -1732,10 +1951,10 @@ BoomletLoop:
                             PingCipherForWT(
                                 self,
                                 boomlet_committed_tx_id_i[self],
-                                boomlet_last_seen_block_i[self],
-                                boomlet_ping_seq_num_i[self],
-                                boomlet_reached_mystery_flag_i[self],
-                                boomlet_duress_placeholder_cipher_i[self]))) };
+                            boomlet_last_seen_block_i[self],
+                            boomlet_ping_seq_num_i[self],
+                            boomlet_reached_mystery_flag_i[self],
+                            boomlet_duress_placeholder_cipher_i[self]))) };
                 end if;
             end with;
         elsif msg.kind = "WithdrawalNisoBoomletMessage7" then
@@ -1771,6 +1990,8 @@ BoomletLoop:
                         boomlet_duress_placeholder_cipher_i[self]))) };
         elsif msg.kind = "WithdrawalNisoBoomletMessage8" then
             hydrated := msg.hydrated_psbt;
+            assert \A j \in Peers :
+                ReachedPingSigValid(msg.reached_pings_collection.items[j], j, boomlet_committed_tx_id_i[self]);
             assert hydrated.tx_id = boomlet_committed_tx_id_i[self];
             boomlet_saved_psbt_i[self] := hydrated;
             boomlet_ready_to_sign_i[self] := TRUE;
@@ -1876,8 +2097,7 @@ SARLoop:
     wt_to_sar[self] := NoValue;
     plaintext := Decrypt(msg.duress_placeholder, SARActor(self));
     assert plaintext # NoValue;
-    if /\ plaintext # SafePaddingPlaintext(self, "commit", 0)
-       /\ plaintext # SafePaddingPlaintext(self, "ping", 0)
+    if /\ ~IsSafePaddingPlaintextForPeer(self, plaintext)
        /\ <<BoomletActor(self), msg.duress_placeholder.iv>> \notin sar_seen_placeholder_iv_i[self]
     then
         sar_escalated_i[self] := TRUE;
@@ -1909,8 +2129,105 @@ variables msg = NoValue,
           pongMap = [i \in Peers |-> NoValue];
 begin
 WTLoop:
-    await (\E i \in Peers : niso_to_wt[i] # NoValue) \/ (\E i \in Peers : sar_to_wt[i] # NoValue);
-    if \E i \in Peers : sar_to_wt[i] # NoValue then
+    await (\E i \in Peers : niso_to_wt[i] # NoValue)
+       \/ (\E i \in Peers : sar_to_wt[i] # NoValue)
+       \/ ( /\ ~wt_relayed_all_approvals
+            /\ \A j \in NonInitiators : wt_noninitiator_tx_approval_i[j] # NoValue
+            /\ \A j \in Peers : wt_to_niso[j] = NoValue
+            /\ most_work_bitcoin_block_height >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+            /\ \A j \in NonInitiators :
+                 /\ SignedContent(wt_noninitiator_tx_approval_i[j]).event_block_height >=
+                    Max2(
+                        SignedContent(wt_saved_wt_tx_approval).event_block_height,
+                        IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                        THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                        ELSE 0)
+                 /\ SignedContent(wt_noninitiator_tx_approval_i[j]).event_block_height <=
+                    most_work_bitcoin_block_height
+                        - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+            /\ SignedContent(wt_initiator_tx_approval).event_block_height >=
+               Max2(
+                    IF SignedContent(wt_saved_wt_tx_approval).event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                    THEN SignedContent(wt_saved_wt_tx_approval).event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                    ELSE 0,
+                    IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                    THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                    ELSE 0)
+            /\ SignedContent(wt_initiator_tx_approval).event_block_height <= SignedContent(wt_saved_wt_tx_approval).event_block_height )
+       \/ ( /\ ~wt_relayed_all_commits
+            /\ \A j \in Peers : wt_signed_commit_i[j] # NoValue /\ wt_commit_sar_reply_i[j] # NoValue
+            /\ \A j \in Peers : wt_to_niso[j] = NoValue
+            /\ most_work_bitcoin_block_height >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS
+            /\ \A j \in Peers :
+                 /\ SignedContent(SignedContent(wt_signed_commit_i[j])).event_block_height >=
+                    IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                    THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                    ELSE 0
+                 /\ SignedContent(SignedContent(wt_signed_commit_i[j])).event_block_height <=
+                    most_work_bitcoin_block_height
+                        - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS );
+    if /\ ~wt_relayed_all_approvals
+       /\ \A j \in NonInitiators : wt_noninitiator_tx_approval_i[j] # NoValue
+       /\ \A j \in Peers : wt_to_niso[j] = NoValue
+       /\ most_work_bitcoin_block_height >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+       /\ \A j \in NonInitiators :
+            /\ SignedContent(wt_noninitiator_tx_approval_i[j]).event_block_height >=
+               Max2(
+                    SignedContent(wt_saved_wt_tx_approval).event_block_height,
+                    IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                    THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                    ELSE 0)
+            /\ SignedContent(wt_noninitiator_tx_approval_i[j]).event_block_height <=
+               most_work_bitcoin_block_height
+                   - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+       /\ SignedContent(wt_initiator_tx_approval).event_block_height >=
+          Max2(
+                IF SignedContent(wt_saved_wt_tx_approval).event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                THEN SignedContent(wt_saved_wt_tx_approval).event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                ELSE 0,
+                IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                ELSE 0)
+       /\ SignedContent(wt_initiator_tx_approval).event_block_height <= SignedContent(wt_saved_wt_tx_approval).event_block_height
+    then
+        wt_to_niso := [j \in Peers |->
+            IF j = INITIATOR
+            THEN WithdrawalWtNisoMessage1([k \in Peers |->
+                    IF k = INITIATOR THEN wt_initiator_tx_approval ELSE wt_noninitiator_tx_approval_i[k]],
+                  wt_saved_wt_tx_approval)
+            ELSE WithdrawalWtNonInitiatorNisoMessage2([k \in NonInitiators |-> wt_noninitiator_tx_approval_i[k]])];
+        wt_relayed_all_approvals := TRUE;
+        wire_trace := wire_trace \cup
+            { WireHop(WTActor, NisoActor(j),
+                IF j = INITIATOR
+                THEN WithdrawalWtNisoMessage1([k \in Peers |->
+                        IF k = INITIATOR THEN wt_initiator_tx_approval ELSE wt_noninitiator_tx_approval_i[k]],
+                      wt_saved_wt_tx_approval)
+                ELSE WithdrawalWtNonInitiatorNisoMessage2([k \in NonInitiators |-> wt_noninitiator_tx_approval_i[k]])) : j \in Peers };
+    elsif /\ ~wt_relayed_all_commits
+          /\ \A j \in Peers : wt_signed_commit_i[j] # NoValue /\ wt_commit_sar_reply_i[j] # NoValue
+          /\ \A j \in Peers : wt_to_niso[j] = NoValue
+          /\ most_work_bitcoin_block_height >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS
+          /\ \A j \in Peers :
+               /\ SignedContent(SignedContent(wt_signed_commit_i[j])).event_block_height >=
+                  IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                  THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                  ELSE 0
+               /\ SignedContent(SignedContent(wt_signed_commit_i[j])).event_block_height <=
+                  most_work_bitcoin_block_height
+                      - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS
+    then
+        wt_to_niso := [j \in Peers |->
+            IF j = INITIATOR
+            THEN WithdrawalWtNisoMessage2(wt_signed_commit_i, wt_commit_sar_reply_i[j])
+            ELSE WithdrawalWtNonInitiatorNisoMessage4(wt_signed_commit_i, wt_commit_sar_reply_i[j])];
+        wt_relayed_all_commits := TRUE;
+        wire_trace := wire_trace \cup
+            { WireHop(WTActor, NisoActor(j),
+                IF j = INITIATOR
+                THEN WithdrawalWtNisoMessage2(wt_signed_commit_i, wt_commit_sar_reply_i[j])
+                ELSE WithdrawalWtNonInitiatorNisoMessage4(wt_signed_commit_i, wt_commit_sar_reply_i[j])) : j \in Peers };
+    elsif \E i \in Peers : sar_to_wt[i] # NoValue then
         with i \in { j \in Peers : sar_to_wt[j] # NoValue } do
             peer := i;
             msg := sar_to_wt[peer];
@@ -1935,17 +2252,6 @@ WTLoop:
                         ELSE wt_to_niso[j]];
                     wire_trace := wire_trace \cup
                         { WireHop(WTActor, NisoActor(j), WithdrawalWtNonInitiatorNisoMessage3(wt_signed_commit_i[peer])) : j \in NonInitiators };
-                elsif \A j \in Peers : wt_signed_commit_i[j] # NoValue then
-                    assert \A j \in Peers : wt_to_niso[j] = NoValue;
-                    wt_to_niso := [j \in Peers |->
-                        IF j = INITIATOR
-                        THEN WithdrawalWtNisoMessage2(wt_signed_commit_i, wt_commit_sar_reply_i[j])
-                        ELSE WithdrawalWtNonInitiatorNisoMessage4(wt_signed_commit_i, wt_commit_sar_reply_i[j])];
-                    wire_trace := wire_trace \cup
-                        { WireHop(WTActor, NisoActor(j),
-                            IF j = INITIATOR
-                            THEN WithdrawalWtNisoMessage2(wt_signed_commit_i, wt_commit_sar_reply_i[j])
-                            ELSE WithdrawalWtNonInitiatorNisoMessage4(wt_signed_commit_i, wt_commit_sar_reply_i[j])) : j \in Peers };
                 end if;
             else
                 assert wt_pending_sar_stage_i[peer] = "ping";
@@ -2035,22 +2341,6 @@ WTLoop:
                     SignedContent(wt_saved_wt_tx_approval).event_block_height,
                     most_work_bitcoin_block_height);
                 wt_noninitiator_tx_approval_i[peer] := decrypted;
-                if \A j \in NonInitiators : wt_noninitiator_tx_approval_i[j] # NoValue then
-                    assert \A j \in Peers : wt_to_niso[j] = NoValue;
-                    wt_to_niso := [j \in Peers |->
-                        IF j = INITIATOR
-                        THEN WithdrawalWtNisoMessage1([k \in Peers |->
-                                IF k = INITIATOR THEN wt_initiator_tx_approval ELSE wt_noninitiator_tx_approval_i[k]],
-                              wt_saved_wt_tx_approval)
-                        ELSE WithdrawalWtNonInitiatorNisoMessage2([k \in NonInitiators |-> wt_noninitiator_tx_approval_i[k]])];
-                    wire_trace := wire_trace \cup
-                        { WireHop(WTActor, NisoActor(j),
-                            IF j = INITIATOR
-                            THEN WithdrawalWtNisoMessage1([k \in Peers |->
-                                    IF k = INITIATOR THEN wt_initiator_tx_approval ELSE wt_noninitiator_tx_approval_i[k]],
-                                  wt_saved_wt_tx_approval)
-                            ELSE WithdrawalWtNonInitiatorNisoMessage2([k \in NonInitiators |-> wt_noninitiator_tx_approval_i[k]])) : j \in Peers };
-                end if;
             elsif msg.kind = "WithdrawalNonInitiatorNisoWtMessage2" then
                 assert ApprovalsBundleSigValid(
                     msg.approvals_signed_by_boomlet_i,
@@ -2112,14 +2402,14 @@ Tick:
 end process;
 end algorithm;
 *)
-\* BEGIN TRANSLATION (chksum(pcal) = "8e5ad789" /\ chksum(tla) = "55fde87")
-\* Process variable msg of process UserFlow at line 1090 col 11 changed to msg_
-\* Process variable signalIndex of process UserFlow at line 1091 col 11 changed to signalIndex_
-\* Process variable msg of process STFlow at line 1156 col 11 changed to msg_S
-\* Process variable msg of process NisoFlow at line 1220 col 11 changed to msg_N
-\* Process variable msg of process BoomletFlow at line 1480 col 11 changed to msg_B
-\* Process variable msg of process IsoFlow at line 1835 col 11 changed to msg_I
-\* Process variable msg of process SARFlow at line 1869 col 11 changed to msg_SA
+\* BEGIN TRANSLATION (chksum(pcal) = "bfffc32e" /\ chksum(tla) = "9d53d9f4")
+\* Process variable msg of process UserFlow at line 1145 col 11 changed to msg_
+\* Process variable signalIndex of process UserFlow at line 1146 col 11 changed to signalIndex_
+\* Process variable msg of process STFlow at line 1211 col 11 changed to msg_S
+\* Process variable msg of process NisoFlow at line 1275 col 11 changed to msg_N
+\* Process variable msg of process BoomletFlow at line 1613 col 11 changed to msg_B
+\* Process variable msg of process IsoFlow at line 2056 col 11 changed to msg_I
+\* Process variable msg of process SARFlow at line 2090 col 11 changed to msg_SA
 VARIABLES wire_trace, boomerang_descriptor, peer_id_collection, 
           st_identity_pubkey_i, sar_pubkey_i, doxing_key_i, 
           duress_consent_set_i, boomlet_mystery_i, 
@@ -2128,11 +2418,12 @@ VARIABLES wire_trace, boomerang_descriptor, peer_id_collection,
           user_sent_initial_psbt_i, user_sent_psbt_agreement_i, 
           user_sent_iso_credentials_i, user_sent_connect_back_to_niso_i, 
           niso_saved_psbt_i, niso_saved_tx_id_i, niso_event_block_height_i, 
-          niso_initiator_peer_id_i, niso_hydrated_psbt_i, 
-          niso_reached_pings_collection_i, boomlet_saved_psbt_i, 
-          boomlet_committed_tx_id_i, boomlet_pending_txid_nonce_i, 
-          boomlet_saved_duress_space_i, boomlet_saved_duress_stage_i, 
-          boomlet_saved_duress_seq_i, boomlet_pending_duress_nonce_i, 
+          niso_initiator_peer_id_i, niso_saved_wt_tx_approval_i, 
+          niso_hydrated_psbt_i, niso_reached_pings_collection_i, 
+          boomlet_saved_psbt_i, boomlet_committed_tx_id_i, 
+          boomlet_pending_txid_nonce_i, boomlet_saved_duress_space_i, 
+          boomlet_saved_duress_stage_i, boomlet_saved_duress_seq_i, 
+          boomlet_pending_duress_nonce_i, 
           boomlet_duress_placeholder_plaintext_i, 
           boomlet_duress_placeholder_cipher_i, boomlet_signed_tx_approval_i, 
           boomlet_saved_wt_tx_approval_i, boomlet_all_peer_approvals_i, 
@@ -2152,7 +2443,8 @@ VARIABLES wire_trace, boomerang_descriptor, peer_id_collection,
           wt_pending_sar_stage_i, wt_pending_placeholder_i, 
           wt_pending_signed_inner_i, wt_commit_sar_reply_i, 
           wt_ping_sar_reply_i, wt_signed_commit_i, wt_last_accepted_ping_i, 
-          wt_reached_pings_collection, wt_last_pong_height, wt_signed_psbt_i, 
+          wt_reached_pings_collection, wt_last_pong_height, 
+          wt_relayed_all_approvals, wt_relayed_all_commits, wt_signed_psbt_i, 
           wt_broadcast, user_to_niso, niso_to_user, user_to_st, st_to_user, 
           boomlet_to_niso, niso_to_boomlet, niso_to_st, st_to_niso, 
           user_to_iso, iso_to_user, boomlet_to_iso, iso_to_boomlet, 
@@ -2170,11 +2462,12 @@ vars == << wire_trace, boomerang_descriptor, peer_id_collection,
            user_sent_initial_psbt_i, user_sent_psbt_agreement_i, 
            user_sent_iso_credentials_i, user_sent_connect_back_to_niso_i, 
            niso_saved_psbt_i, niso_saved_tx_id_i, niso_event_block_height_i, 
-           niso_initiator_peer_id_i, niso_hydrated_psbt_i, 
-           niso_reached_pings_collection_i, boomlet_saved_psbt_i, 
-           boomlet_committed_tx_id_i, boomlet_pending_txid_nonce_i, 
-           boomlet_saved_duress_space_i, boomlet_saved_duress_stage_i, 
-           boomlet_saved_duress_seq_i, boomlet_pending_duress_nonce_i, 
+           niso_initiator_peer_id_i, niso_saved_wt_tx_approval_i, 
+           niso_hydrated_psbt_i, niso_reached_pings_collection_i, 
+           boomlet_saved_psbt_i, boomlet_committed_tx_id_i, 
+           boomlet_pending_txid_nonce_i, boomlet_saved_duress_space_i, 
+           boomlet_saved_duress_stage_i, boomlet_saved_duress_seq_i, 
+           boomlet_pending_duress_nonce_i, 
            boomlet_duress_placeholder_plaintext_i, 
            boomlet_duress_placeholder_cipher_i, boomlet_signed_tx_approval_i, 
            boomlet_saved_wt_tx_approval_i, boomlet_all_peer_approvals_i, 
@@ -2194,7 +2487,8 @@ vars == << wire_trace, boomerang_descriptor, peer_id_collection,
            wt_pending_sar_stage_i, wt_pending_placeholder_i, 
            wt_pending_signed_inner_i, wt_commit_sar_reply_i, 
            wt_ping_sar_reply_i, wt_signed_commit_i, wt_last_accepted_ping_i, 
-           wt_reached_pings_collection, wt_last_pong_height, wt_signed_psbt_i, 
+           wt_reached_pings_collection, wt_last_pong_height, 
+           wt_relayed_all_approvals, wt_relayed_all_commits, wt_signed_psbt_i, 
            wt_broadcast, user_to_niso, niso_to_user, user_to_st, st_to_user, 
            boomlet_to_niso, niso_to_boomlet, niso_to_st, st_to_niso, 
            user_to_iso, iso_to_user, boomlet_to_iso, iso_to_boomlet, 
@@ -2228,6 +2522,7 @@ Init == (* Global variables *)
         /\ niso_saved_tx_id_i = [i \in Peers |-> NoValue]
         /\ niso_event_block_height_i = [i \in Peers |-> Milestone0]
         /\ niso_initiator_peer_id_i = [i \in Peers |-> NoValue]
+        /\ niso_saved_wt_tx_approval_i = [i \in Peers |-> NoValue]
         /\ niso_hydrated_psbt_i = [i \in Peers |-> NoValue]
         /\ niso_reached_pings_collection_i = [i \in Peers |-> NoValue]
         /\ boomlet_saved_psbt_i = [i \in Peers |-> NoValue]
@@ -2277,6 +2572,8 @@ Init == (* Global variables *)
         /\ wt_last_accepted_ping_i = [i \in Peers |-> NoValue]
         /\ wt_reached_pings_collection = [i \in Peers |-> NoValue]
         /\ wt_last_pong_height = NoValue
+        /\ wt_relayed_all_approvals = FALSE
+        /\ wt_relayed_all_commits = FALSE
         /\ wt_signed_psbt_i = [i \in Peers |-> NoValue]
         /\ wt_broadcast = NoValue
         /\ user_to_niso = [i \in Peers |-> NoValue]
@@ -2361,9 +2658,9 @@ UserLoop(self) == /\ pc[self] = "UserLoop"
                                         /\ st_to_user' = [st_to_user EXCEPT ![self] = NoValue]
                                         /\ IF msg_'[self].kind = TxIdOutputKind(self)
                                               THEN /\ Assert(msg_'[self].tx_id = TxOfPsbt[user_saved_psbt_i[self]], 
-                                                             "Failure of assertion at line 1106, column 13.")
+                                                             "Failure of assertion at line 1161, column 13.")
                                                    /\ Assert(user_to_st[self] = NoValue, 
-                                                             "Failure of assertion at line 1107, column 13.")
+                                                             "Failure of assertion at line 1162, column 13.")
                                                    /\ user_to_st' = [user_to_st EXCEPT ![self] = TxIdUserAckMessage(self)]
                                                    /\ wire_trace' = (wire_trace \cup { WireHop(UserActor(self), STActor(self), TxIdUserAckMessage(self)) })
                                                    /\ UNCHANGED << user_last_duress_space_i, 
@@ -2372,7 +2669,7 @@ UserLoop(self) == /\ pc[self] = "UserLoop"
                                                          THEN /\ user_last_duress_space_i' = [user_last_duress_space_i EXCEPT ![self] = msg_'[self].duress_check_space]
                                                               /\ signalIndex_' = [signalIndex_ EXCEPT ![self] = BuildDuressSignalIndex(msg_'[self].duress_check_space, TRUE, duress_consent_set_i[self])]
                                                               /\ Assert(user_to_st[self] = NoValue, 
-                                                                        "Failure of assertion at line 1113, column 13.")
+                                                                        "Failure of assertion at line 1168, column 13.")
                                                               /\ user_to_st' = [user_to_st EXCEPT ![self] = [ kind |-> IF msg_'[self].kind = RecurringDuressOutputKind THEN RecurringDuressInputKind ELSE InitialDuressInputKind(self),
                                                                                                               duress_signal_index |-> signalIndex_'[self],
                                                                                                               stage |-> msg_'[self].stage,
@@ -2404,7 +2701,7 @@ UserLoop(self) == /\ pc[self] = "UserLoop"
                                                          THEN /\ user_saved_psbt_i' = [user_saved_psbt_i EXCEPT ![self] = msg_'[self].psbt]
                                                               /\ user_initiator_peer_id_i' = [user_initiator_peer_id_i EXCEPT ![self] = msg_'[self].initiator_peer_id]
                                                               /\ Assert(user_to_niso[self] = NoValue, 
-                                                                        "Failure of assertion at line 1132, column 13.")
+                                                                        "Failure of assertion at line 1187, column 13.")
                                                               /\ user_to_niso' = [user_to_niso EXCEPT ![self] = WithdrawalNonInitiatorNisoInput1]
                                                               /\ user_sent_psbt_agreement_i' = [user_sent_psbt_agreement_i EXCEPT ![self] = TRUE]
                                                               /\ wire_trace' = (wire_trace \cup { WireHop(UserActor(self), NisoActor(self), WithdrawalNonInitiatorNisoInput1) })
@@ -2412,7 +2709,7 @@ UserLoop(self) == /\ pc[self] = "UserLoop"
                                                                               user_to_iso >>
                                                          ELSE /\ IF msg_'[self].kind = "WithdrawalNisoOutput1"
                                                                     THEN /\ Assert(user_to_iso[self] = NoValue, 
-                                                                                   "Failure of assertion at line 1137, column 13.")
+                                                                                   "Failure of assertion at line 1192, column 13.")
                                                                          /\ user_to_iso' = [user_to_iso EXCEPT ![self] = WithdrawalIsoInput1]
                                                                          /\ user_sent_iso_credentials_i' = [user_sent_iso_credentials_i EXCEPT ![self] = TRUE]
                                                                          /\ wire_trace' = (wire_trace \cup { WireHop(UserActor(self), IsoActor(self), WithdrawalIsoInput1) })
@@ -2430,7 +2727,7 @@ UserLoop(self) == /\ pc[self] = "UserLoop"
                                                    /\ iso_to_user' = [iso_to_user EXCEPT ![self] = NoValue]
                                                    /\ IF msg_'[self].kind = "WithdrawalIsoOutput1"
                                                          THEN /\ Assert(user_to_niso[self] = NoValue, 
-                                                                        "Failure of assertion at line 1146, column 13.")
+                                                                        "Failure of assertion at line 1201, column 13.")
                                                               /\ user_to_niso' = [user_to_niso EXCEPT ![self] = WithdrawalNisoInput2]
                                                               /\ user_sent_connect_back_to_niso_i' = [user_sent_connect_back_to_niso_i EXCEPT ![self] = TRUE]
                                                               /\ wire_trace' = (wire_trace \cup { WireHop(UserActor(self), NisoActor(self), WithdrawalNisoInput2) })
@@ -2457,6 +2754,7 @@ UserLoop(self) == /\ pc[self] = "UserLoop"
                                   niso_saved_psbt_i, niso_saved_tx_id_i, 
                                   niso_event_block_height_i, 
                                   niso_initiator_peer_id_i, 
+                                  niso_saved_wt_tx_approval_i, 
                                   niso_hydrated_psbt_i, 
                                   niso_reached_pings_collection_i, 
                                   boomlet_saved_psbt_i, 
@@ -2499,7 +2797,9 @@ UserLoop(self) == /\ pc[self] = "UserLoop"
                                   wt_commit_sar_reply_i, wt_ping_sar_reply_i, 
                                   wt_signed_commit_i, wt_last_accepted_ping_i, 
                                   wt_reached_pings_collection, 
-                                  wt_last_pong_height, wt_signed_psbt_i, 
+                                  wt_last_pong_height, 
+                                  wt_relayed_all_approvals, 
+                                  wt_relayed_all_commits, wt_signed_psbt_i, 
                                   wt_broadcast, boomlet_to_niso, 
                                   niso_to_boomlet, niso_to_st, st_to_niso, 
                                   boomlet_to_iso, iso_to_boomlet, niso_to_wt, 
@@ -2521,19 +2821,19 @@ STLoop(self) == /\ pc[self] = "STLoop"
                            /\ IF msg_S'[self].kind \in {"WithdrawalNisoStMessage1", "WithdrawalNonInitiatorNisoStMessage1"}
                                  THEN /\ nonceWrapped' = [nonceWrapped EXCEPT ![self] = Decrypt(msg_S'[self].tx_id_with_nonce_encrypted_by_boomlet_for_st, STActor(self))]
                                       /\ Assert(nonceWrapped'[self] # NoValue, 
-                                                "Failure of assertion at line 1167, column 13.")
+                                                "Failure of assertion at line 1222, column 13.")
                                       /\ st_last_txid_with_nonce_i' = [st_last_txid_with_nonce_i EXCEPT ![self] = nonceWrapped'[self]]
                                       /\ Assert(st_to_user[self] = NoValue, 
-                                                "Failure of assertion at line 1169, column 13.")
+                                                "Failure of assertion at line 1224, column 13.")
                                       /\ st_to_user' = [st_to_user EXCEPT ![self] = WithdrawalStOutput1(self, nonceWrapped'[self].content)]
                                       /\ wire_trace' = (wire_trace \cup { WireHop(STActor(self), UserActor(self), WithdrawalStOutput1(self, nonceWrapped'[self].content)) })
                                       /\ UNCHANGED st_last_duress_check_i
                                  ELSE /\ nonceWrapped' = [nonceWrapped EXCEPT ![self] = Decrypt(msg_S'[self].duress_check_space_with_nonce_encrypted_by_boomlet_for_st, STActor(self))]
                                       /\ Assert(nonceWrapped'[self] # NoValue, 
-                                                "Failure of assertion at line 1174, column 13.")
+                                                "Failure of assertion at line 1229, column 13.")
                                       /\ st_last_duress_check_i' = [st_last_duress_check_i EXCEPT ![self] = nonceWrapped'[self]]
                                       /\ Assert(st_to_user[self] = NoValue, 
-                                                "Failure of assertion at line 1176, column 13.")
+                                                "Failure of assertion at line 1231, column 13.")
                                       /\ IF msg_S'[self].kind = "WithdrawalNisoStMessage3"
                                             THEN /\ st_to_user' = [st_to_user EXCEPT ![self] = WithdrawalStOutput3(nonceWrapped'[self].content, nonceWrapped'[self].content.stage, nonceWrapped'[self].content.seq)]
                                                  /\ wire_trace' = (          wire_trace \cup
@@ -2547,18 +2847,18 @@ STLoop(self) == /\ pc[self] = "STLoop"
                            /\ user_to_st' = [user_to_st EXCEPT ![self] = NoValue]
                            /\ IF msg_S'[self].kind \in {"WithdrawalStInput1", "WithdrawalNonInitiatorStInput1"}
                                  THEN /\ Assert(st_last_txid_with_nonce_i[self] # NoValue, 
-                                                "Failure of assertion at line 1191, column 13.")
+                                                "Failure of assertion at line 1246, column 13.")
                                       /\ Assert(st_to_niso[self] = NoValue, 
-                                                "Failure of assertion at line 1192, column 13.")
+                                                "Failure of assertion at line 1247, column 13.")
                                       /\ st_to_niso' = [st_to_niso EXCEPT ![self] = WithdrawalStNisoMessage1(self, TxIdAckCipher(self, st_last_txid_with_nonce_i[self].content, st_last_txid_with_nonce_i[self].nonce))]
                                       /\ wire_trace' = (          wire_trace \cup
                                                         { WireHop(STActor(self), NisoActor(self), WithdrawalStNisoMessage1(self, TxIdAckCipher(self, st_last_txid_with_nonce_i[self].content, st_last_txid_with_nonce_i[self].nonce))) })
                                       /\ UNCHANGED signalIndex
                                  ELSE /\ Assert(st_last_duress_check_i[self] # NoValue, 
-                                                "Failure of assertion at line 1197, column 13.")
+                                                "Failure of assertion at line 1252, column 13.")
                                       /\ signalIndex' = [signalIndex EXCEPT ![self] = msg_S'[self].duress_signal_index]
                                       /\ Assert(st_to_niso[self] = NoValue, 
-                                                "Failure of assertion at line 1199, column 13.")
+                                                "Failure of assertion at line 1254, column 13.")
                                       /\ IF msg_S'[self].kind = "WithdrawalStInput3"
                                             THEN /\ st_to_niso' = [st_to_niso EXCEPT ![self] =                 WithdrawalStNisoMessage3(
                                                                                                DuressReplyCipher(self, msg_S'[self].stage, msg_S'[self].seq, st_last_duress_check_i[self].nonce, signalIndex'[self]))]
@@ -2588,7 +2888,9 @@ STLoop(self) == /\ pc[self] = "STLoop"
                                 user_sent_connect_back_to_niso_i, 
                                 niso_saved_psbt_i, niso_saved_tx_id_i, 
                                 niso_event_block_height_i, 
-                                niso_initiator_peer_id_i, niso_hydrated_psbt_i, 
+                                niso_initiator_peer_id_i, 
+                                niso_saved_wt_tx_approval_i, 
+                                niso_hydrated_psbt_i, 
                                 niso_reached_pings_collection_i, 
                                 boomlet_saved_psbt_i, 
                                 boomlet_committed_tx_id_i, 
@@ -2624,7 +2926,8 @@ STLoop(self) == /\ pc[self] = "STLoop"
                                 wt_commit_sar_reply_i, wt_ping_sar_reply_i, 
                                 wt_signed_commit_i, wt_last_accepted_ping_i, 
                                 wt_reached_pings_collection, 
-                                wt_last_pong_height, wt_signed_psbt_i, 
+                                wt_last_pong_height, wt_relayed_all_approvals, 
+                                wt_relayed_all_commits, wt_signed_psbt_i, 
                                 wt_broadcast, user_to_niso, niso_to_user, 
                                 boomlet_to_niso, niso_to_boomlet, user_to_iso, 
                                 iso_to_user, boomlet_to_iso, iso_to_boomlet, 
@@ -2648,35 +2951,36 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                              /\ user_to_niso' = [user_to_niso EXCEPT ![self] = NoValue]
                              /\ IF msg_N'[self].kind = "WithdrawalNisoInput1"
                                    THEN /\ Assert(self = INITIATOR, 
-                                                  "Failure of assertion at line 1235, column 13.")
+                                                  "Failure of assertion at line 1290, column 13.")
                                         /\ Assert(most_work_bitcoin_block_height >= boomerang_descriptor.milestone_block_0, 
-                                                  "Failure of assertion at line 1236, column 13.")
+                                                  "Failure of assertion at line 1291, column 13.")
                                         /\ Assert(PsbtSatisfiable(msg_N'[self].psbt), 
-                                                  "Failure of assertion at line 1237, column 13.")
+                                                  "Failure of assertion at line 1292, column 13.")
                                         /\ niso_saved_psbt_i' = [niso_saved_psbt_i EXCEPT ![self] = msg_N'[self].psbt]
                                         /\ niso_saved_tx_id_i' = [niso_saved_tx_id_i EXCEPT ![self] = TxOfPsbt[msg_N'[self].psbt]]
                                         /\ niso_event_block_height_i' = [niso_event_block_height_i EXCEPT ![self] = most_work_bitcoin_block_height]
                                         /\ Assert(niso_to_boomlet[self] = NoValue, 
-                                                  "Failure of assertion at line 1241, column 13.")
+                                                  "Failure of assertion at line 1296, column 13.")
                                         /\ niso_to_boomlet' = [niso_to_boomlet EXCEPT ![self] = WithdrawalNisoBoomletMessage1(msg_N'[self].psbt, niso_event_block_height_i'[self])]
                                         /\ wire_trace' = (wire_trace \cup { WireHop(NisoActor(self), BoomletActor(self), WithdrawalNisoBoomletMessage1(msg_N'[self].psbt, niso_event_block_height_i'[self])) })
                                    ELSE /\ IF msg_N'[self].kind = "WithdrawalNonInitiatorNisoInput1"
                                               THEN /\ Assert(self # INITIATOR, 
-                                                             "Failure of assertion at line 1245, column 13.")
+                                                             "Failure of assertion at line 1300, column 13.")
                                                    /\ Assert(niso_to_boomlet[self] = NoValue, 
-                                                             "Failure of assertion at line 1246, column 13.")
+                                                             "Failure of assertion at line 1301, column 13.")
                                                    /\ niso_to_boomlet' = [niso_to_boomlet EXCEPT ![self] = WithdrawalNonInitiatorNisoBoomletMessage2]
                                                    /\ wire_trace' = (wire_trace \cup { WireHop(NisoActor(self), BoomletActor(self), WithdrawalNonInitiatorNisoBoomletMessage2) })
                                               ELSE /\ Assert(msg_N'[self].kind = "WithdrawalNisoInput2", 
-                                                             "Failure of assertion at line 1250, column 13.")
+                                                             "Failure of assertion at line 1305, column 13.")
                                                    /\ Assert(niso_to_boomlet[self] = NoValue, 
-                                                             "Failure of assertion at line 1251, column 13.")
+                                                             "Failure of assertion at line 1306, column 13.")
                                                    /\ niso_to_boomlet' = [niso_to_boomlet EXCEPT ![self] = WithdrawalNisoBoomletMessage9]
                                                    /\ wire_trace' = (wire_trace \cup { WireHop(NisoActor(self), BoomletActor(self), WithdrawalNisoBoomletMessage9) })
                                         /\ UNCHANGED << niso_saved_psbt_i, 
                                                         niso_saved_tx_id_i, 
                                                         niso_event_block_height_i >>
                              /\ UNCHANGED << niso_initiator_peer_id_i, 
+                                             niso_saved_wt_tx_approval_i, 
                                              niso_hydrated_psbt_i, 
                                              niso_reached_pings_collection_i, 
                                              niso_to_user, boomlet_to_niso, 
@@ -2688,7 +2992,7 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                         /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] = NoValue]
                                         /\ IF msg_N'[self].kind = "WithdrawalBoomletNisoMessage1"
                                               THEN /\ Assert(niso_to_st[self] = NoValue, 
-                                                             "Failure of assertion at line 1259, column 13.")
+                                                             "Failure of assertion at line 1314, column 13.")
                                                    /\ niso_to_st' = [niso_to_st EXCEPT ![self] = WithdrawalNisoStMessage1(self, msg_N'[self].tx_id_with_nonce_encrypted_by_boomlet_for_st)]
                                                    /\ wire_trace' = (wire_trace \cup { WireHop(NisoActor(self), STActor(self), WithdrawalNisoStMessage1(self, msg_N'[self].tx_id_with_nonce_encrypted_by_boomlet_for_st)) })
                                                    /\ UNCHANGED << niso_saved_psbt_i, 
@@ -2696,26 +3000,26 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                    niso_to_wt >>
                                               ELSE /\ IF msg_N'[self].kind = "WithdrawalNonInitiatorBoomletNisoMessage1"
                                                          THEN /\ Assert(PsbtSatisfiable(msg_N'[self].psbt), 
-                                                                        "Failure of assertion at line 1263, column 13.")
+                                                                        "Failure of assertion at line 1318, column 13.")
                                                               /\ Assert(TxOfPsbt[msg_N'[self].psbt] = niso_saved_tx_id_i[self], 
-                                                                        "Failure of assertion at line 1264, column 13.")
+                                                                        "Failure of assertion at line 1319, column 13.")
                                                               /\ niso_saved_psbt_i' = [niso_saved_psbt_i EXCEPT ![self] = msg_N'[self].psbt]
                                                               /\ Assert(niso_to_user[self] = NoValue, 
-                                                                        "Failure of assertion at line 1266, column 13.")
+                                                                        "Failure of assertion at line 1321, column 13.")
                                                               /\ niso_to_user' = [niso_to_user EXCEPT ![self] = WithdrawalNonInitiatorNisoOutput1(msg_N'[self].psbt, niso_initiator_peer_id_i[self])]
                                                               /\ wire_trace' = (wire_trace \cup { WireHop(NisoActor(self), UserActor(self), WithdrawalNonInitiatorNisoOutput1(msg_N'[self].psbt, niso_initiator_peer_id_i[self])) })
                                                               /\ UNCHANGED << niso_to_st, 
                                                                               niso_to_wt >>
                                                          ELSE /\ IF msg_N'[self].kind = "WithdrawalNonInitiatorBoomletNisoMessage2"
                                                                     THEN /\ Assert(niso_to_st[self] = NoValue, 
-                                                                                   "Failure of assertion at line 1270, column 13.")
+                                                                                   "Failure of assertion at line 1325, column 13.")
                                                                          /\ niso_to_st' = [niso_to_st EXCEPT ![self] = WithdrawalNisoStMessage1(self, msg_N'[self].tx_id_with_nonce_encrypted_by_boomlet_for_st)]
                                                                          /\ wire_trace' = (wire_trace \cup { WireHop(NisoActor(self), STActor(self), WithdrawalNisoStMessage1(self, msg_N'[self].tx_id_with_nonce_encrypted_by_boomlet_for_st)) })
                                                                          /\ UNCHANGED << niso_to_user, 
                                                                                          niso_to_wt >>
                                                                     ELSE /\ IF msg_N'[self].kind = "WithdrawalBoomletNisoMessage2"
                                                                                THEN /\ Assert(niso_to_wt[self] = NoValue, 
-                                                                                              "Failure of assertion at line 1274, column 13.")
+                                                                                              "Failure of assertion at line 1329, column 13.")
                                                                                     /\ niso_to_wt' = [niso_to_wt EXCEPT ![self] =                 WithdrawalNisoWtMessage1(
                                                                                                                                   msg_N'[self].initiator_tx_approval_signed_by_boomlet_0_encrypted_by_boomlet_0_for_wt,
                                                                                                                                   msg_N'[self].psbt_encrypted_collection)]
@@ -2727,7 +3031,7 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                                     niso_to_st >>
                                                                                ELSE /\ IF msg_N'[self].kind = "WithdrawalNonInitiatorBoomletNisoMessage3"
                                                                                           THEN /\ Assert(niso_to_wt[self] = NoValue, 
-                                                                                                         "Failure of assertion at line 1283, column 13.")
+                                                                                                         "Failure of assertion at line 1338, column 13.")
                                                                                                /\ niso_to_wt' = [niso_to_wt EXCEPT ![self] = WithdrawalNonInitiatorNisoWtMessage1(msg_N'[self].peer_i_tx_approval_signed_by_boomlet_i_encrypted_by_boomlet_i_for_wt)]
                                                                                                /\ wire_trace' = (          wire_trace \cup
                                                                                                                  { WireHop(NisoActor(self), WTActor, WithdrawalNonInitiatorNisoWtMessage1(msg_N'[self].peer_i_tx_approval_signed_by_boomlet_i_encrypted_by_boomlet_i_for_wt)) })
@@ -2735,7 +3039,7 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                                                niso_to_st >>
                                                                                           ELSE /\ IF msg_N'[self].kind = "WithdrawalBoomletNisoMessage3"
                                                                                                      THEN /\ Assert(niso_to_st[self] = NoValue, 
-                                                                                                                    "Failure of assertion at line 1288, column 13.")
+                                                                                                                    "Failure of assertion at line 1343, column 13.")
                                                                                                           /\ niso_to_st' = [niso_to_st EXCEPT ![self] = WithdrawalNisoStMessage2(self, msg_N'[self].duress_check_space_with_nonce_encrypted_by_boomlet_for_st)]
                                                                                                           /\ wire_trace' = (          wire_trace \cup
                                                                                                                             { WireHop(NisoActor(self), STActor(self), WithdrawalNisoStMessage2(self, msg_N'[self].duress_check_space_with_nonce_encrypted_by_boomlet_for_st)) })
@@ -2743,7 +3047,7 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                                                           niso_to_wt >>
                                                                                                      ELSE /\ IF msg_N'[self].kind = "WithdrawalNonInitiatorBoomletNisoMessage4"
                                                                                                                 THEN /\ Assert(niso_to_st[self] = NoValue, 
-                                                                                                                               "Failure of assertion at line 1293, column 13.")
+                                                                                                                               "Failure of assertion at line 1348, column 13.")
                                                                                                                      /\ niso_to_st' = [niso_to_st EXCEPT ![self] = WithdrawalNisoStMessage2(self, msg_N'[self].duress_check_space_with_nonce_encrypted_by_boomlet_for_st)]
                                                                                                                      /\ wire_trace' = (          wire_trace \cup
                                                                                                                                        { WireHop(NisoActor(self), STActor(self), WithdrawalNisoStMessage2(self, msg_N'[self].duress_check_space_with_nonce_encrypted_by_boomlet_for_st)) })
@@ -2751,7 +3055,7 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                                                                      niso_to_wt >>
                                                                                                                 ELSE /\ IF msg_N'[self].kind = "WithdrawalBoomletNisoMessage4"
                                                                                                                            THEN /\ Assert(niso_to_wt[self] = NoValue, 
-                                                                                                                                          "Failure of assertion at line 1298, column 13.")
+                                                                                                                                          "Failure of assertion at line 1353, column 13.")
                                                                                                                                 /\ niso_to_wt' = [niso_to_wt EXCEPT ![self] = WithdrawalNisoWtMessage2(msg_N'[self].peer_0_tx_commit_signed_by_boomlet_0_padded_signed_by_boomlet_0_encrypted_by_boomlet_0_for_wt)]
                                                                                                                                 /\ wire_trace' = (          wire_trace \cup
                                                                                                                                                   { WireHop(NisoActor(self), WTActor, WithdrawalNisoWtMessage2(msg_N'[self].peer_0_tx_commit_signed_by_boomlet_0_padded_signed_by_boomlet_0_encrypted_by_boomlet_0_for_wt)) })
@@ -2759,7 +3063,7 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                                                                                 niso_to_st >>
                                                                                                                            ELSE /\ IF msg_N'[self].kind = "WithdrawalNonInitiatorBoomletNisoMessage5"
                                                                                                                                       THEN /\ Assert(niso_to_wt[self] = NoValue, 
-                                                                                                                                                     "Failure of assertion at line 1303, column 13.")
+                                                                                                                                                     "Failure of assertion at line 1358, column 13.")
                                                                                                                                            /\ niso_to_wt' = [niso_to_wt EXCEPT ![self] = WithdrawalNonInitiatorNisoWtMessage2(msg_N'[self].approvals_signed_by_boomlet_i)]
                                                                                                                                            /\ wire_trace' = (          wire_trace \cup
                                                                                                                                                              { WireHop(NisoActor(self), WTActor, WithdrawalNonInitiatorNisoWtMessage2(msg_N'[self].approvals_signed_by_boomlet_i)) })
@@ -2767,7 +3071,7 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                                                                                            niso_to_st >>
                                                                                                                                       ELSE /\ IF msg_N'[self].kind = "WithdrawalNonInitiatorBoomletNisoMessage6"
                                                                                                                                                  THEN /\ Assert(niso_to_wt[self] = NoValue, 
-                                                                                                                                                                "Failure of assertion at line 1308, column 13.")
+                                                                                                                                                                "Failure of assertion at line 1363, column 13.")
                                                                                                                                                       /\ niso_to_wt' = [niso_to_wt EXCEPT ![self] = WithdrawalNonInitiatorNisoWtMessage3(msg_N'[self].peer_i_tx_commit_signed_by_boomlet_i_padded_signed_by_boomlet_i_encrypted_by_boomlet_i_for_wt)]
                                                                                                                                                       /\ wire_trace' = (          wire_trace \cup
                                                                                                                                                                         { WireHop(NisoActor(self), WTActor, WithdrawalNonInitiatorNisoWtMessage3(msg_N'[self].peer_i_tx_commit_signed_by_boomlet_i_padded_signed_by_boomlet_i_encrypted_by_boomlet_i_for_wt)) })
@@ -2775,7 +3079,7 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                                                                                                       niso_to_st >>
                                                                                                                                                  ELSE /\ IF msg_N'[self].kind = "WithdrawalBoomletNisoMessage5"
                                                                                                                                                             THEN /\ Assert(niso_to_wt[self] = NoValue, 
-                                                                                                                                                                           "Failure of assertion at line 1313, column 13.")
+                                                                                                                                                                           "Failure of assertion at line 1368, column 13.")
                                                                                                                                                                  /\ niso_to_wt' = [niso_to_wt EXCEPT ![self] = PingToWTMessage(self, FALSE, msg_N'[self].peer_i_ping_signed_by_boomlet_i_padded_signed_by_boomlet_i_encrypted_by_boomlet_i_for_wt)]
                                                                                                                                                                  /\ wire_trace' = (          wire_trace \cup
                                                                                                                                                                                    { WireHop(NisoActor(self), WTActor, PingToWTMessage(self, FALSE, msg_N'[self].peer_i_ping_signed_by_boomlet_i_padded_signed_by_boomlet_i_encrypted_by_boomlet_i_for_wt)) })
@@ -2783,7 +3087,7 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                                                                                                                  niso_to_st >>
                                                                                                                                                             ELSE /\ IF msg_N'[self].kind = "WithdrawalBoomletNisoMessage6"
                                                                                                                                                                        THEN /\ Assert(niso_to_st[self] = NoValue, 
-                                                                                                                                                                                      "Failure of assertion at line 1318, column 13.")
+                                                                                                                                                                                      "Failure of assertion at line 1373, column 13.")
                                                                                                                                                                             /\ niso_to_st' = [niso_to_st EXCEPT ![self] = WithdrawalNisoStMessage3(msg_N'[self].duress_check_space_with_nonce_encrypted_by_boomlet_for_st)]
                                                                                                                                                                             /\ wire_trace' = (          wire_trace \cup
                                                                                                                                                                                               { WireHop(NisoActor(self), STActor(self), WithdrawalNisoStMessage3(msg_N'[self].duress_check_space_with_nonce_encrypted_by_boomlet_for_st)) })
@@ -2791,21 +3095,21 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                                                                                                                             niso_to_wt >>
                                                                                                                                                                        ELSE /\ IF msg_N'[self].kind = "WithdrawalBoomletNisoMessage7"
                                                                                                                                                                                   THEN /\ Assert(niso_to_wt[self] = NoValue, 
-                                                                                                                                                                                                 "Failure of assertion at line 1323, column 13.")
+                                                                                                                                                                                                 "Failure of assertion at line 1378, column 13.")
                                                                                                                                                                                        /\ niso_to_wt' = [niso_to_wt EXCEPT ![self] = PingToWTMessage(self, TRUE, msg_N'[self].peer_i_ping_signed_by_boomlet_i_padded_signed_by_boomlet_i_encrypted_by_boomlet_i_for_wt)]
                                                                                                                                                                                        /\ wire_trace' = (          wire_trace \cup
                                                                                                                                                                                                          { WireHop(NisoActor(self), WTActor, PingToWTMessage(self, TRUE, msg_N'[self].peer_i_ping_signed_by_boomlet_i_padded_signed_by_boomlet_i_encrypted_by_boomlet_i_for_wt)) })
                                                                                                                                                                                        /\ UNCHANGED niso_to_user
                                                                                                                                                                                   ELSE /\ IF msg_N'[self].kind = "WithdrawalBoomletNisoMessage8"
                                                                                                                                                                                              THEN /\ Assert(niso_to_user[self] = NoValue, 
-                                                                                                                                                                                                            "Failure of assertion at line 1328, column 13.")
+                                                                                                                                                                                                            "Failure of assertion at line 1383, column 13.")
                                                                                                                                                                                                   /\ niso_to_user' = [niso_to_user EXCEPT ![self] = WithdrawalNisoOutput1]
                                                                                                                                                                                                   /\ wire_trace' = (wire_trace \cup { WireHop(NisoActor(self), UserActor(self), WithdrawalNisoOutput1) })
                                                                                                                                                                                                   /\ UNCHANGED niso_to_wt
                                                                                                                                                                                              ELSE /\ Assert(msg_N'[self].kind = "WithdrawalBoomletNisoMessage9", 
-                                                                                                                                                                                                            "Failure of assertion at line 1332, column 13.")
+                                                                                                                                                                                                            "Failure of assertion at line 1387, column 13.")
                                                                                                                                                                                                   /\ Assert(niso_to_wt[self] = NoValue, 
-                                                                                                                                                                                                            "Failure of assertion at line 1333, column 13.")
+                                                                                                                                                                                                            "Failure of assertion at line 1388, column 13.")
                                                                                                                                                                                                   /\ niso_to_wt' = [niso_to_wt EXCEPT ![self] = WithdrawalNisoWtMessage5(msg_N'[self].psbt_signed_i)]
                                                                                                                                                                                                   /\ wire_trace' = (wire_trace \cup { WireHop(NisoActor(self), WTActor, WithdrawalNisoWtMessage5(msg_N'[self].psbt_signed_i)) })
                                                                                                                                                                                                   /\ UNCHANGED niso_to_user
@@ -2814,6 +3118,7 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                         /\ UNCHANGED << niso_saved_tx_id_i, 
                                                         niso_event_block_height_i, 
                                                         niso_initiator_peer_id_i, 
+                                                        niso_saved_wt_tx_approval_i, 
                                                         niso_hydrated_psbt_i, 
                                                         niso_reached_pings_collection_i, 
                                                         niso_to_boomlet, 
@@ -2825,7 +3130,7 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                    /\ st_to_niso' = [st_to_niso EXCEPT ![self] = NoValue]
                                                    /\ IF msg_N'[self].kind \in {"WithdrawalStNisoMessage1", "WithdrawalNonInitiatorStNisoMessage1"}
                                                          THEN /\ Assert(niso_to_boomlet[self] = NoValue, 
-                                                                        "Failure of assertion at line 1341, column 13.")
+                                                                        "Failure of assertion at line 1396, column 13.")
                                                               /\ IF self = INITIATOR
                                                                     THEN /\ niso_to_boomlet' = [niso_to_boomlet EXCEPT ![self] = WithdrawalNisoBoomletMessage2(msg_N'[self].tx_id_with_nonce_signed_by_st_encrypted_by_st_for_boomlet)]
                                                                          /\ wire_trace' = (wire_trace \cup { WireHop(NisoActor(self), BoomletActor(self), WithdrawalNisoBoomletMessage2(msg_N'[self].tx_id_with_nonce_signed_by_st_encrypted_by_st_for_boomlet)) })
@@ -2836,21 +3141,22 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                            { WireHop(NisoActor(self), BoomletActor(self), WithdrawalNonInitiatorNisoBoomletMessage3(msg_N'[self].tx_id_with_nonce_signed_by_st_encrypted_by_st_for_boomlet, niso_event_block_height_i'[self])) })
                                                          ELSE /\ IF msg_N'[self].kind \in {"WithdrawalStNisoMessage2", "WithdrawalNonInitiatorStNisoMessage2"}
                                                                     THEN /\ Assert(niso_to_boomlet[self] = NoValue, 
-                                                                                   "Failure of assertion at line 1352, column 13.")
+                                                                                   "Failure of assertion at line 1407, column 13.")
                                                                          /\ IF self = INITIATOR
                                                                                THEN /\ niso_to_boomlet' = [niso_to_boomlet EXCEPT ![self] = WithdrawalNisoBoomletMessage4(msg_N'[self].duress_signal_index_with_nonce_encrypted_by_st_for_boomlet)]
                                                                                     /\ wire_trace' = (wire_trace \cup { WireHop(NisoActor(self), BoomletActor(self), WithdrawalNisoBoomletMessage4(msg_N'[self].duress_signal_index_with_nonce_encrypted_by_st_for_boomlet)) })
                                                                                ELSE /\ niso_to_boomlet' = [niso_to_boomlet EXCEPT ![self] = WithdrawalNonInitiatorNisoBoomletMessage5(msg_N'[self].duress_signal_index_with_nonce_encrypted_by_st_for_boomlet)]
                                                                                     /\ wire_trace' = (wire_trace \cup { WireHop(NisoActor(self), BoomletActor(self), WithdrawalNonInitiatorNisoBoomletMessage5(msg_N'[self].duress_signal_index_with_nonce_encrypted_by_st_for_boomlet)) })
                                                                     ELSE /\ Assert(msg_N'[self].kind = "WithdrawalStNisoMessage3", 
-                                                                                   "Failure of assertion at line 1361, column 13.")
+                                                                                   "Failure of assertion at line 1416, column 13.")
                                                                          /\ Assert(niso_to_boomlet[self] = NoValue, 
-                                                                                   "Failure of assertion at line 1362, column 13.")
+                                                                                   "Failure of assertion at line 1417, column 13.")
                                                                          /\ niso_to_boomlet' = [niso_to_boomlet EXCEPT ![self] = WithdrawalNisoBoomletMessage7(msg_N'[self].duress_signal_index_with_nonce_encrypted_by_st_for_boomlet)]
                                                                          /\ wire_trace' = (wire_trace \cup { WireHop(NisoActor(self), BoomletActor(self), WithdrawalNisoBoomletMessage7(msg_N'[self].duress_signal_index_with_nonce_encrypted_by_st_for_boomlet)) })
                                                               /\ UNCHANGED niso_event_block_height_i
                                                    /\ UNCHANGED << niso_saved_tx_id_i, 
                                                                    niso_initiator_peer_id_i, 
+                                                                   niso_saved_wt_tx_approval_i, 
                                                                    niso_hydrated_psbt_i, 
                                                                    niso_reached_pings_collection_i, 
                                                                    wt_to_niso, 
@@ -2868,18 +3174,32 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                         INITIATOR,
                                                                         SignedContent(approvalSig'[self]).event_block_height,
                                                                         most_work_bitcoin_block_height), 
-                                                                        "Failure of assertion at line 1372, column 13.")
+                                                                        "Failure of assertion at line 1427, column 13.")
                                                               /\ Assert(ValidSig(approvalSig'[self], BoomletActor(INITIATOR)), 
-                                                                        "Failure of assertion at line 1378, column 13.")
+                                                                        "Failure of assertion at line 1433, column 13.")
                                                               /\ Assert(SignedContent(wtSig'[self]).initiator_id \in peer_id_collection, 
-                                                                        "Failure of assertion at line 1379, column 13.")
+                                                                        "Failure of assertion at line 1434, column 13.")
+                                                              /\ Assert(SignedContent(approvalSig'[self]).magic = "approved", 
+                                                                        "Failure of assertion at line 1435, column 13.")
+                                                              /\ Assert(SignedContent(wtSig'[self]).magic = "approved", 
+                                                                        "Failure of assertion at line 1436, column 13.")
+                                                              /\ Assert(SignedContent(approvalSig'[self]).tx_id = SignedContent(wtSig'[self]).tx_id, 
+                                                                        "Failure of assertion at line 1437, column 13.")
+                                                              /\ Assert(   SignedContent(wtSig'[self]).event_block_height >=
+                                                                        Max2(
+                                                                            SignedContent(approvalSig'[self]).event_block_height,
+                                                                            IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_WT_TX_APPROVAL_BY_NON_INITIATOR_PEERS
+                                                                            THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_WT_TX_APPROVAL_BY_NON_INITIATOR_PEERS
+                                                                            ELSE 0), 
+                                                                        "Failure of assertion at line 1438, column 13.")
                                                               /\ niso_saved_tx_id_i' = [niso_saved_tx_id_i EXCEPT ![self] = SignedContent(wtSig'[self]).tx_id]
                                                               /\ niso_initiator_peer_id_i' = [niso_initiator_peer_id_i EXCEPT ![self] = SignedContent(wtSig'[self]).initiator_id]
+                                                              /\ niso_saved_wt_tx_approval_i' = [niso_saved_wt_tx_approval_i EXCEPT ![self] = wtSig'[self]]
                                                               /\ niso_event_block_height_i' = [niso_event_block_height_i EXCEPT ![self] = most_work_bitcoin_block_height]
                                                               /\ Assert(most_work_bitcoin_block_height >= boomerang_descriptor.milestone_block_0, 
-                                                                        "Failure of assertion at line 1383, column 13.")
+                                                                        "Failure of assertion at line 1448, column 13.")
                                                               /\ Assert(niso_to_boomlet[self] = NoValue, 
-                                                                        "Failure of assertion at line 1384, column 13.")
+                                                                        "Failure of assertion at line 1449, column 13.")
                                                               /\ niso_to_boomlet' = [niso_to_boomlet EXCEPT ![self] =                      WithdrawalNonInitiatorNisoBoomletMessage1(
                                                                                                                       wtSig'[self],
                                                                                                                       approvalSig'[self],
@@ -2902,17 +3222,63 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                    INITIATOR,
                                                                                    SignedContent(msg_N'[self].all_peer_tx_approvals[INITIATOR]).event_block_height,
                                                                                    most_work_bitcoin_block_height), 
-                                                                                   "Failure of assertion at line 1398, column 13.")
+                                                                                   "Failure of assertion at line 1463, column 13.")
+                                                                         /\ Assert(ValidSig(msg_N'[self].all_peer_tx_approvals[INITIATOR], BoomletActor(INITIATOR)), 
+                                                                                   "Failure of assertion at line 1469, column 13.")
+                                                                         /\ Assert(SignedContent(msg_N'[self].all_peer_tx_approvals[INITIATOR]).magic = "approved", 
+                                                                                   "Failure of assertion at line 1470, column 13.")
+                                                                         /\ Assert(SignedContent(msg_N'[self].all_peer_tx_approvals[INITIATOR]).tx_id = niso_saved_tx_id_i[self], 
+                                                                                   "Failure of assertion at line 1471, column 13.")
+                                                                         /\ Assert(SignedContent(wtSig'[self]).magic = "approved", 
+                                                                                   "Failure of assertion at line 1472, column 13.")
+                                                                         /\ Assert(SignedContent(wtSig'[self]).tx_id = niso_saved_tx_id_i[self], 
+                                                                                   "Failure of assertion at line 1473, column 13.")
+                                                                         /\ Assert(SignedContent(wtSig'[self]).event_block_height >= SignedContent(msg_N'[self].all_peer_tx_approvals[INITIATOR]).event_block_height, 
+                                                                                   "Failure of assertion at line 1474, column 13.")
+                                                                         /\ Assert(   SignedContent(wtSig'[self]).event_block_height <=
+                                                                                   Min2(
+                                                                                       SignedContent(msg_N'[self].all_peer_tx_approvals[INITIATOR]).event_block_height
+                                                                                           + TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT,
+                                                                                       most_work_bitcoin_block_height), 
+                                                                                   "Failure of assertion at line 1475, column 13.")
+                                                                         /\ Assert(   SignedContent(msg_N'[self].all_peer_tx_approvals[INITIATOR]).event_block_height >=
+                                                                                   Max2(
+                                                                                       IF SignedContent(wtSig'[self]).event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                                                                                       THEN SignedContent(wtSig'[self]).event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                                                                                       ELSE 0,
+                                                                                       IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                                                                                       THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                                                                                       ELSE 0), 
+                                                                                   "Failure of assertion at line 1480, column 13.")
+                                                                         /\ Assert(SignedContent(msg_N'[self].all_peer_tx_approvals[INITIATOR]).event_block_height <= SignedContent(wtSig'[self]).event_block_height, 
+                                                                                   "Failure of assertion at line 1488, column 13.")
+                                                                         /\ Assert(most_work_bitcoin_block_height >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER, 
+                                                                                   "Failure of assertion at line 1489, column 13.")
+                                                                         /\ Assert(   \A j \in NonInitiators :
+                                                                                   /\ ValidSig(msg_N'[self].all_peer_tx_approvals[j], BoomletActor(j))
+                                                                                   /\ SignedContent(msg_N'[self].all_peer_tx_approvals[j]).magic = "approved"
+                                                                                   /\ SignedContent(msg_N'[self].all_peer_tx_approvals[j]).tx_id = niso_saved_tx_id_i[self]
+                                                                                   /\ SignedContent(msg_N'[self].all_peer_tx_approvals[j]).event_block_height >=
+                                                                                       Max2(
+                                                                                           SignedContent(wtSig'[self]).event_block_height,
+                                                                                           IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                                                                                           THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                                                                                           ELSE 0)
+                                                                                   /\ SignedContent(msg_N'[self].all_peer_tx_approvals[j]).event_block_height <=
+                                                                                       most_work_bitcoin_block_height
+                                                                                           - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER, 
+                                                                                   "Failure of assertion at line 1490, column 13.")
+                                                                         /\ niso_saved_wt_tx_approval_i' = [niso_saved_wt_tx_approval_i EXCEPT ![self] = wtSig'[self]]
                                                                          /\ niso_event_block_height_i' = [niso_event_block_height_i EXCEPT ![self] = most_work_bitcoin_block_height]
                                                                          /\ Assert(niso_to_boomlet[self] = NoValue, 
-                                                                                   "Failure of assertion at line 1405, column 13.")
+                                                                                   "Failure of assertion at line 1505, column 13.")
                                                                          /\ niso_to_boomlet' = [niso_to_boomlet EXCEPT ![self] =                      WithdrawalNisoBoomletMessage3(
-                                                                                                                                 msg_N'[self].all_peer_tx_approvals,
+                                                                                                                                 [j \in NonInitiators |-> msg_N'[self].all_peer_tx_approvals[j]],
                                                                                                                                  wtSig'[self],
                                                                                                                                  niso_event_block_height_i'[self])]
                                                                          /\ wire_trace' = (          wire_trace \cup
                                                                                            { WireHop(NisoActor(self), BoomletActor(self), WithdrawalNisoBoomletMessage3(
-                                                                                               msg_N'[self].all_peer_tx_approvals,
+                                                                                               [j \in NonInitiators |-> msg_N'[self].all_peer_tx_approvals[j]],
                                                                                                wtSig'[self],
                                                                                                niso_event_block_height_i'[self])) })
                                                                          /\ UNCHANGED << niso_hydrated_psbt_i, 
@@ -2920,8 +3286,31 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                          commitSig >>
                                                                     ELSE /\ IF msg_N'[self].kind = "WithdrawalWtNonInitiatorNisoMessage2"
                                                                                THEN /\ niso_event_block_height_i' = [niso_event_block_height_i EXCEPT ![self] = most_work_bitcoin_block_height]
+                                                                                    /\ Assert(niso_saved_wt_tx_approval_i[self] # NoValue, 
+                                                                                              "Failure of assertion at line 1517, column 13.")
+                                                                                    /\ Assert(   \A j \in NonInitiators :
+                                                                                              /\ ValidSig(msg_N'[self].non_initiator_tx_approvals[j], BoomletActor(j))
+                                                                                              /\ SignedContent(msg_N'[self].non_initiator_tx_approvals[j]).magic = "approved"
+                                                                                              /\ SignedContent(msg_N'[self].non_initiator_tx_approvals[j]).tx_id = niso_saved_tx_id_i[self]
+                                                                                              /\ SignedContent(msg_N'[self].non_initiator_tx_approvals[j]).event_block_height >=
+                                                                                                  Max2(
+                                                                                                      SignedContent(niso_saved_wt_tx_approval_i[self]).event_block_height,
+                                                                                                      IF niso_event_block_height_i'[self] >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                                                                                                      THEN niso_event_block_height_i'[self] - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                                                                                                      ELSE 0)
+                                                                                              /\ SignedContent(msg_N'[self].non_initiator_tx_approvals[j]).event_block_height <=
+                                                                                                  Min2(
+                                                                                                      niso_event_block_height_i'[self],
+                                                                                                      SignedContent(niso_saved_wt_tx_approval_i[self]).event_block_height
+                                                                                                          + TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS), 
+                                                                                              "Failure of assertion at line 1518, column 13.")
+                                                                                    /\ Assert(   SignedContent(niso_saved_wt_tx_approval_i[self]).event_block_height >=
+                                                                                              IF niso_event_block_height_i'[self] >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                                                                                              THEN niso_event_block_height_i'[self] - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                                                                                              ELSE 0, 
+                                                                                              "Failure of assertion at line 1533, column 13.")
                                                                                     /\ Assert(niso_to_boomlet[self] = NoValue, 
-                                                                                              "Failure of assertion at line 1417, column 13.")
+                                                                                              "Failure of assertion at line 1537, column 13.")
                                                                                     /\ niso_to_boomlet' = [niso_to_boomlet EXCEPT ![self] =                      WithdrawalNonInitiatorNisoBoomletMessage4(
                                                                                                                                             msg_N'[self].non_initiator_tx_approvals,
                                                                                                                                             niso_event_block_height_i'[self])]
@@ -2942,10 +3331,10 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                                          THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_PEER_TO_RECEIVING_INITIATOR_PEER_TX_COMMITMENT_BY_NON_INITIATOR_PEERS
                                                                                                          ELSE 0,
                                                                                                          most_work_bitcoin_block_height), 
-                                                                                                         "Failure of assertion at line 1427, column 13.")
+                                                                                                         "Failure of assertion at line 1547, column 13.")
                                                                                                /\ niso_event_block_height_i' = [niso_event_block_height_i EXCEPT ![self] = most_work_bitcoin_block_height]
                                                                                                /\ Assert(niso_to_boomlet[self] = NoValue, 
-                                                                                                         "Failure of assertion at line 1436, column 13.")
+                                                                                                         "Failure of assertion at line 1556, column 13.")
                                                                                                /\ niso_to_boomlet' = [niso_to_boomlet EXCEPT ![self] = WithdrawalNonInitiatorNisoBoomletMessage6(commitSig'[self], niso_event_block_height_i'[self])]
                                                                                                /\ wire_trace' = (          wire_trace \cup
                                                                                                                  { WireHop(NisoActor(self), BoomletActor(self), WithdrawalNonInitiatorNisoBoomletMessage6(commitSig'[self], niso_event_block_height_i'[self])) })
@@ -2953,8 +3342,21 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                                                niso_reached_pings_collection_i >>
                                                                                           ELSE /\ IF msg_N'[self].kind \in {"WithdrawalWtNisoMessage2", "WithdrawalWtNonInitiatorNisoMessage4"}
                                                                                                      THEN /\ niso_event_block_height_i' = [niso_event_block_height_i EXCEPT ![self] = most_work_bitcoin_block_height]
+                                                                                                          /\ Assert(niso_event_block_height_i'[self] >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS, 
+                                                                                                                    "Failure of assertion at line 1562, column 13.")
+                                                                                                          /\ Assert(   \A j \in Peers :
+                                                                                                                    WTSignedCommitValid(
+                                                                                                                        msg_N'[self].all_peer_tx_commit_signed_by_boomlet_i_signed_by_wt[j],
+                                                                                                                        j,
+                                                                                                                        niso_saved_tx_id_i[self],
+                                                                                                                        IF niso_event_block_height_i'[self] >= TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                                                                                                                        THEN niso_event_block_height_i'[self] - TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                                                                                                                        ELSE 0,
+                                                                                                                        niso_event_block_height_i'[self]
+                                                                                                                            - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS), 
+                                                                                                                    "Failure of assertion at line 1563, column 13.")
                                                                                                           /\ Assert(niso_to_boomlet[self] = NoValue, 
-                                                                                                                    "Failure of assertion at line 1442, column 13.")
+                                                                                                                    "Failure of assertion at line 1573, column 13.")
                                                                                                           /\ niso_to_boomlet' = [niso_to_boomlet EXCEPT ![self] =                      WithdrawalNisoBoomletMessage5(
                                                                                                                                                                   msg_N'[self].all_peer_tx_commit_signed_by_boomlet_i_signed_by_wt,
                                                                                                                                                                   msg_N'[self].duress_placeholder_signed_by_sar_encrypted_by_sar_for_boomlet,
@@ -2969,7 +3371,7 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                                      ELSE /\ IF msg_N'[self].kind = "WithdrawalWtNisoMessage3"
                                                                                                                 THEN /\ niso_event_block_height_i' = [niso_event_block_height_i EXCEPT ![self] = most_work_bitcoin_block_height]
                                                                                                                      /\ Assert(niso_to_boomlet[self] = NoValue, 
-                                                                                                                               "Failure of assertion at line 1454, column 13.")
+                                                                                                                               "Failure of assertion at line 1585, column 13.")
                                                                                                                      /\ niso_to_boomlet' = [niso_to_boomlet EXCEPT ![self] =                      WithdrawalNisoBoomletMessage6(
                                                                                                                                                                              msg_N'[self].pong_signed_by_wt_encrypted_by_wt_for_boomlet,
                                                                                                                                                                              msg_N'[self].duress_placeholder_signed_by_sar_encrypted_by_sar_for_boomlet,
@@ -2982,21 +3384,25 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                                                                                                      /\ UNCHANGED << niso_hydrated_psbt_i, 
                                                                                                                                      niso_reached_pings_collection_i >>
                                                                                                                 ELSE /\ Assert(msg_N'[self].kind = "WithdrawalWtNisoMessage4", 
-                                                                                                                               "Failure of assertion at line 1465, column 13.")
+                                                                                                                               "Failure of assertion at line 1596, column 13.")
                                                                                                                      /\ Assert(msg_N'[self].reached_pings_collection.kind = "ReachedPingsCollection", 
-                                                                                                                               "Failure of assertion at line 1466, column 13.")
+                                                                                                                               "Failure of assertion at line 1597, column 13.")
+                                                                                                                     /\ Assert(   \A j \in Peers :
+                                                                                                                               ReachedPingSigValid(msg_N'[self].reached_pings_collection.items[j], j, niso_saved_tx_id_i[self]), 
+                                                                                                                               "Failure of assertion at line 1598, column 13.")
                                                                                                                      /\ niso_reached_pings_collection_i' = [niso_reached_pings_collection_i EXCEPT ![self] = msg_N'[self].reached_pings_collection]
                                                                                                                      /\ niso_hydrated_psbt_i' = [niso_hydrated_psbt_i EXCEPT ![self] = HydratePsbt(niso_saved_psbt_i[self])]
                                                                                                                      /\ Assert(niso_hydrated_psbt_i'[self] # NoValue, 
-                                                                                                                               "Failure of assertion at line 1469, column 13.")
+                                                                                                                               "Failure of assertion at line 1602, column 13.")
                                                                                                                      /\ Assert(niso_to_boomlet[self] = NoValue, 
-                                                                                                                               "Failure of assertion at line 1470, column 13.")
+                                                                                                                               "Failure of assertion at line 1603, column 13.")
                                                                                                                      /\ niso_to_boomlet' = [niso_to_boomlet EXCEPT ![self] = WithdrawalNisoBoomletMessage8(msg_N'[self].reached_pings_collection, niso_hydrated_psbt_i'[self])]
                                                                                                                      /\ wire_trace' = (          wire_trace \cup
                                                                                                                                        { WireHop(NisoActor(self), BoomletActor(self), WithdrawalNisoBoomletMessage8(msg_N'[self].reached_pings_collection, niso_hydrated_psbt_i'[self])) })
                                                                                                                      /\ UNCHANGED niso_event_block_height_i
                                                                                                /\ UNCHANGED commitSig
-                                                                         /\ wtSig' = wtSig
+                                                                         /\ UNCHANGED << niso_saved_wt_tx_approval_i, 
+                                                                                         wtSig >>
                                                               /\ UNCHANGED << niso_saved_tx_id_i, 
                                                                               niso_initiator_peer_id_i, 
                                                                               approvalSig >>
@@ -3058,7 +3464,9 @@ NisoLoop(self) == /\ pc[self] = "NisoLoop"
                                   wt_commit_sar_reply_i, wt_ping_sar_reply_i, 
                                   wt_signed_commit_i, wt_last_accepted_ping_i, 
                                   wt_reached_pings_collection, 
-                                  wt_last_pong_height, wt_signed_psbt_i, 
+                                  wt_last_pong_height, 
+                                  wt_relayed_all_approvals, 
+                                  wt_relayed_all_commits, wt_signed_psbt_i, 
                                   wt_broadcast, user_to_st, st_to_user, 
                                   user_to_iso, iso_to_user, boomlet_to_iso, 
                                   iso_to_boomlet, wt_to_sar, sar_to_wt, msg_, 
@@ -3078,14 +3486,14 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                 /\ niso_to_boomlet' = [niso_to_boomlet EXCEPT ![self] = NoValue]
                                 /\ IF msg_B'[self].kind = "WithdrawalNisoBoomletMessage1"
                                       THEN /\ Assert(self = INITIATOR, 
-                                                     "Failure of assertion at line 1493, column 13.")
+                                                     "Failure of assertion at line 1626, column 13.")
                                            /\ Assert(msg_B'[self].niso_0_event_block_height >= boomerang_descriptor.milestone_block_0, 
-                                                     "Failure of assertion at line 1494, column 13.")
+                                                     "Failure of assertion at line 1627, column 13.")
                                            /\ boomlet_saved_psbt_i' = [boomlet_saved_psbt_i EXCEPT ![self] = msg_B'[self].psbt]
                                            /\ boomlet_committed_tx_id_i' = [boomlet_committed_tx_id_i EXCEPT ![self] = TxOfPsbt[msg_B'[self].psbt]]
                                            /\ boomlet_pending_txid_nonce_i' = [boomlet_pending_txid_nonce_i EXCEPT ![self] = NonceValue(self, "txid", 0)]
                                            /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                     "Failure of assertion at line 1498, column 13.")
+                                                     "Failure of assertion at line 1631, column 13.")
                                            /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] =                      WithdrawalBoomletNisoMessage1(
                                                                                                    TxIdChallengeCipher(self, boomlet_committed_tx_id_i'[self], boomlet_pending_txid_nonce_i'[self]))]
                                            /\ wire_trace' = (          wire_trace \cup
@@ -3117,10 +3525,10 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                            prevPings >>
                                       ELSE /\ IF msg_B'[self].kind = "WithdrawalNisoBoomletMessage2"
                                                  THEN /\ Assert(TxIdAckValid(self, boomlet_committed_tx_id_i[self], boomlet_pending_txid_nonce_i[self], msg_B'[self].tx_id_with_nonce_signed_by_st_encrypted_by_st_for_boomlet), 
-                                                                "Failure of assertion at line 1505, column 13.")
+                                                                "Failure of assertion at line 1638, column 13.")
                                                       /\ boomlet_signed_tx_approval_i' = [boomlet_signed_tx_approval_i EXCEPT ![self] = SignedTxApproval(self, boomlet_committed_tx_id_i[self], niso_event_block_height_i[self])]
                                                       /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                                "Failure of assertion at line 1507, column 13.")
+                                                                "Failure of assertion at line 1640, column 13.")
                                                       /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] =                      WithdrawalBoomletNisoMessage2(
                                                                                                               ApprovalCipherForWT(self, boomlet_committed_tx_id_i[self], niso_event_block_height_i[self]),
                                                                                                               Collection([j \in NonInitiators |-> PsbtCipherForPeer(self, j, boomlet_saved_psbt_i[self], boomlet_committed_tx_id_i[self]) ]))]
@@ -3156,23 +3564,54 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                       prevPings >>
                                                  ELSE /\ IF msg_B'[self].kind = "WithdrawalNonInitiatorNisoBoomletMessage1"
                                                             THEN /\ Assert(self # INITIATOR, 
-                                                                           "Failure of assertion at line 1516, column 13.")
+                                                                           "Failure of assertion at line 1649, column 13.")
                                                                  /\ Assert(ValidSig(msg_B'[self].wt_tx_approval_signed_by_wt, WTActor), 
-                                                                           "Failure of assertion at line 1517, column 13.")
+                                                                           "Failure of assertion at line 1650, column 13.")
                                                                  /\ Assert(ValidSig(msg_B'[self].peer_0_tx_approval_signed_by_boomlet_0, BoomletActor(INITIATOR)), 
-                                                                           "Failure of assertion at line 1518, column 13.")
+                                                                           "Failure of assertion at line 1651, column 13.")
                                                                  /\ Assert(SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).initiator_id \in peer_id_collection, 
-                                                                           "Failure of assertion at line 1519, column 13.")
+                                                                           "Failure of assertion at line 1652, column 13.")
+                                                                 /\ Assert(SignedContent(msg_B'[self].peer_0_tx_approval_signed_by_boomlet_0).magic = "approved", 
+                                                                           "Failure of assertion at line 1653, column 13.")
+                                                                 /\ Assert(SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).magic = "approved", 
+                                                                           "Failure of assertion at line 1654, column 13.")
                                                                  /\ boomlet_saved_wt_tx_approval_i' = [boomlet_saved_wt_tx_approval_i EXCEPT ![self] = msg_B'[self].wt_tx_approval_signed_by_wt]
                                                                  /\ boomlet_signed_tx_approval_i' = [boomlet_signed_tx_approval_i EXCEPT ![INITIATOR] = msg_B'[self].peer_0_tx_approval_signed_by_boomlet_0]
                                                                  /\ boomlet_saved_psbt_i' = [boomlet_saved_psbt_i EXCEPT ![self] = Decrypt(msg_B'[self].psbt_encrypted_by_boomlet_0_for_boomlet_i, BoomletActor(self))]
                                                                  /\ Assert(boomlet_saved_psbt_i'[self] # NoValue, 
-                                                                           "Failure of assertion at line 1523, column 13.")
+                                                                           "Failure of assertion at line 1658, column 13.")
                                                                  /\ boomlet_committed_tx_id_i' = [boomlet_committed_tx_id_i EXCEPT ![self] = TxOfPsbt[boomlet_saved_psbt_i'[self]]]
                                                                  /\ Assert(boomlet_committed_tx_id_i'[self] = SignedContent(msg_B'[self].peer_0_tx_approval_signed_by_boomlet_0).tx_id, 
-                                                                           "Failure of assertion at line 1525, column 13.")
+                                                                           "Failure of assertion at line 1660, column 13.")
+                                                                 /\ Assert(SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).tx_id = boomlet_committed_tx_id_i'[self], 
+                                                                           "Failure of assertion at line 1661, column 13.")
+                                                                 /\ Assert(   SignedContent(msg_B'[self].peer_0_tx_approval_signed_by_boomlet_0).event_block_height >=
+                                                                           IF SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                                                                           THEN SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                                                                           ELSE 0, 
+                                                                           "Failure of assertion at line 1662, column 13.")
+                                                                 /\ Assert(   SignedContent(msg_B'[self].peer_0_tx_approval_signed_by_boomlet_0).event_block_height <=
+                                                                           Min2(
+                                                                               msg_B'[self].niso_1_event_block_height,
+                                                                               SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).event_block_height), 
+                                                                           "Failure of assertion at line 1666, column 13.")
+                                                                 /\ Assert(   SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).event_block_height >=
+                                                                           Max2(
+                                                                               SignedContent(msg_B'[self].peer_0_tx_approval_signed_by_boomlet_0).event_block_height,
+                                                                               IF msg_B'[self].niso_1_event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_WT_TX_APPROVAL_BY_NON_INITIATOR_PEERS
+                                                                               THEN msg_B'[self].niso_1_event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_WT_TX_APPROVAL_BY_NON_INITIATOR_PEERS
+                                                                               ELSE 0), 
+                                                                           "Failure of assertion at line 1670, column 13.")
+                                                                 /\ Assert(   SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).event_block_height <=
+                                                                           Min2(
+                                                                               SignedContent(msg_B'[self].peer_0_tx_approval_signed_by_boomlet_0).event_block_height
+                                                                                   + TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT,
+                                                                               msg_B'[self].niso_1_event_block_height), 
+                                                                           "Failure of assertion at line 1676, column 13.")
+                                                                 /\ Assert(msg_B'[self].niso_1_event_block_height >= boomerang_descriptor.milestone_block_0, 
+                                                                           "Failure of assertion at line 1681, column 13.")
                                                                  /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                                           "Failure of assertion at line 1526, column 13.")
+                                                                           "Failure of assertion at line 1682, column 13.")
                                                                  /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] = WithdrawalNonInitiatorBoomletNisoMessage1(boomlet_saved_psbt_i'[self])]
                                                                  /\ wire_trace' = (          wire_trace \cup
                                                                                    { WireHop(BoomletActor(self), NisoActor(self), WithdrawalNonInitiatorBoomletNisoMessage1(boomlet_saved_psbt_i'[self])) })
@@ -3202,7 +3641,7 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                             ELSE /\ IF msg_B'[self].kind = "WithdrawalNonInitiatorNisoBoomletMessage2"
                                                                        THEN /\ boomlet_pending_txid_nonce_i' = [boomlet_pending_txid_nonce_i EXCEPT ![self] = NonceValue(self, "txid", 0)]
                                                                             /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                                                      "Failure of assertion at line 1532, column 13.")
+                                                                                      "Failure of assertion at line 1688, column 13.")
                                                                             /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] =                      WithdrawalNonInitiatorBoomletNisoMessage2(
                                                                                                                                     TxIdChallengeCipher(self, boomlet_committed_tx_id_i[self], boomlet_pending_txid_nonce_i'[self]))]
                                                                             /\ wire_trace' = (          wire_trace \cup
@@ -3236,10 +3675,10 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                             prevPings >>
                                                                        ELSE /\ IF msg_B'[self].kind = "WithdrawalNonInitiatorNisoBoomletMessage3"
                                                                                   THEN /\ Assert(TxIdAckValid(self, boomlet_committed_tx_id_i[self], boomlet_pending_txid_nonce_i[self], msg_B'[self].tx_id_with_nonce_signed_by_st_encrypted_by_st_for_boomlet), 
-                                                                                                 "Failure of assertion at line 1539, column 13.")
+                                                                                                 "Failure of assertion at line 1695, column 13.")
                                                                                        /\ boomlet_signed_tx_approval_i' = [boomlet_signed_tx_approval_i EXCEPT ![self] = SignedTxApproval(self, boomlet_committed_tx_id_i[self], msg_B'[self].niso_1_event_block_height)]
                                                                                        /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                                                                 "Failure of assertion at line 1541, column 13.")
+                                                                                                 "Failure of assertion at line 1697, column 13.")
                                                                                        /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] =                      WithdrawalNonInitiatorBoomletNisoMessage3(
                                                                                                                                                ApprovalCipherForWT(self, boomlet_committed_tx_id_i[self], msg_B'[self].niso_1_event_block_height))]
                                                                                        /\ wire_trace' = (          wire_trace \cup
@@ -3272,7 +3711,47 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                        signedPong, 
                                                                                                        prevPings >>
                                                                                   ELSE /\ IF msg_B'[self].kind = "WithdrawalNisoBoomletMessage3"
-                                                                                             THEN /\ boomlet_all_peer_approvals_i' = [boomlet_all_peer_approvals_i EXCEPT ![self] = msg_B'[self].all_peer_tx_approvals]
+                                                                                             THEN /\ Assert(ValidSig(msg_B'[self].wt_tx_approval_signed_by_wt, WTActor), 
+                                                                                                            "Failure of assertion at line 1704, column 13.")
+                                                                                                  /\ Assert(SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).magic = "approved", 
+                                                                                                            "Failure of assertion at line 1705, column 13.")
+                                                                                                  /\ Assert(SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).tx_id = boomlet_committed_tx_id_i[self], 
+                                                                                                            "Failure of assertion at line 1706, column 13.")
+                                                                                                  /\ Assert(   \A j \in NonInitiators :
+                                                                                                            /\ ValidSig(msg_B'[self].all_peer_tx_approvals[j], BoomletActor(j))
+                                                                                                            /\ SignedContent(msg_B'[self].all_peer_tx_approvals[j]).magic = "approved"
+                                                                                                            /\ SignedContent(msg_B'[self].all_peer_tx_approvals[j]).tx_id = boomlet_committed_tx_id_i[self]
+                                                                                                            /\ SignedContent(msg_B'[self].all_peer_tx_approvals[j]).event_block_height >=
+                                                                                                                Max2(
+                                                                                                                    SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).event_block_height,
+                                                                                                                    IF msg_B'[self].niso_0_event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                                                                                                                    THEN msg_B'[self].niso_0_event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                                                                                                                    ELSE 0)
+                                                                                                            /\ msg_B'[self].niso_0_event_block_height >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                                                                                                            /\ SignedContent(msg_B'[self].all_peer_tx_approvals[j]).event_block_height <=
+                                                                                                                msg_B'[self].niso_0_event_block_height
+                                                                                                                             - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER, 
+                                                                                                            "Failure of assertion at line 1707, column 13.")
+                                                                                                  /\ Assert(SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).event_block_height >= SignedContent(boomlet_signed_tx_approval_i[self]).event_block_height, 
+                                                                                                            "Failure of assertion at line 1721, column 13.")
+                                                                                                  /\ Assert(   SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).event_block_height <=
+                                                                                                            Min2(
+                                                                                                                SignedContent(boomlet_signed_tx_approval_i[self]).event_block_height
+                                                                                                                    + TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT,
+                                                                                                                msg_B'[self].niso_0_event_block_height), 
+                                                                                                            "Failure of assertion at line 1722, column 13.")
+                                                                                                  /\ Assert(   SignedContent(boomlet_signed_tx_approval_i[self]).event_block_height >=
+                                                                                                            Max2(
+                                                                                                                IF SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                                                                                                                THEN SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                                                                                                                ELSE 0,
+                                                                                                                IF msg_B'[self].niso_0_event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                                                                                                                THEN msg_B'[self].niso_0_event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                                                                                                                ELSE 0), 
+                                                                                                            "Failure of assertion at line 1727, column 13.")
+                                                                                                  /\ Assert(SignedContent(boomlet_signed_tx_approval_i[self]).event_block_height <= SignedContent(msg_B'[self].wt_tx_approval_signed_by_wt).event_block_height, 
+                                                                                                            "Failure of assertion at line 1735, column 13.")
+                                                                                                  /\ boomlet_all_peer_approvals_i' = [boomlet_all_peer_approvals_i EXCEPT ![self] = msg_B'[self].all_peer_tx_approvals]
                                                                                                   /\ boomlet_saved_wt_tx_approval_i' = [boomlet_saved_wt_tx_approval_i EXCEPT ![self] = msg_B'[self].wt_tx_approval_signed_by_wt]
                                                                                                   /\ boomlet_saved_duress_stage_i' = [boomlet_saved_duress_stage_i EXCEPT ![self] = "initial"]
                                                                                                   /\ boomlet_saved_duress_seq_i' = [boomlet_saved_duress_seq_i EXCEPT ![self] = 1]
@@ -3280,7 +3759,7 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                        /\ boomlet_saved_duress_space_i' = [boomlet_saved_duress_space_i EXCEPT ![self] = space]
                                                                                                        /\ boomlet_pending_duress_nonce_i' = [boomlet_pending_duress_nonce_i EXCEPT ![self] = NonceValue(self, "initial_duress", 1)]
                                                                                                        /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                                                                                 "Failure of assertion at line 1555, column 17.")
+                                                                                                                 "Failure of assertion at line 1743, column 17.")
                                                                                                        /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] = WithdrawalBoomletNisoMessage3(DuressCheckCipher(space, boomlet_pending_duress_nonce_i'[self]))]
                                                                                                        /\ wire_trace' = (          wire_trace \cup
                                                                                                                          { WireHop(BoomletActor(self), NisoActor(self), WithdrawalBoomletNisoMessage3(DuressCheckCipher(space, boomlet_pending_duress_nonce_i'[self]))) })
@@ -3305,14 +3784,37 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                   signedPong, 
                                                                                                                   prevPings >>
                                                                                              ELSE /\ IF msg_B'[self].kind = "WithdrawalNonInitiatorNisoBoomletMessage4"
-                                                                                                        THEN /\ boomlet_all_peer_approvals_i' = [boomlet_all_peer_approvals_i EXCEPT ![self] = msg_B'[self].non_initiator_tx_approvals]
+                                                                                                        THEN /\ Assert(boomlet_saved_wt_tx_approval_i[self] # NoValue, 
+                                                                                                                       "Failure of assertion at line 1749, column 13.")
+                                                                                                             /\ Assert(   \A j \in NonInitiators :
+                                                                                                                       /\ ValidSig(msg_B'[self].non_initiator_tx_approvals[j], BoomletActor(j))
+                                                                                                                       /\ SignedContent(msg_B'[self].non_initiator_tx_approvals[j]).magic = "approved"
+                                                                                                                       /\ SignedContent(msg_B'[self].non_initiator_tx_approvals[j]).tx_id = boomlet_committed_tx_id_i[self]
+                                                                                                                       /\ SignedContent(msg_B'[self].non_initiator_tx_approvals[j]).event_block_height >=
+                                                                                                                           Max2(
+                                                                                                                               SignedContent(boomlet_saved_wt_tx_approval_i[self]).event_block_height,
+                                                                                                                               IF msg_B'[self].niso_1_event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                                                                                                                               THEN msg_B'[self].niso_1_event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                                                                                                                               ELSE 0)
+                                                                                                                       /\ SignedContent(msg_B'[self].non_initiator_tx_approvals[j]).event_block_height <=
+                                                                                                                           Min2(
+                                                                                                                               msg_B'[self].niso_1_event_block_height,
+                                                                                                                               SignedContent(boomlet_saved_wt_tx_approval_i[self]).event_block_height
+                                                                                                                                   + TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS), 
+                                                                                                                       "Failure of assertion at line 1750, column 13.")
+                                                                                                             /\ Assert(   SignedContent(boomlet_saved_wt_tx_approval_i[self]).event_block_height >=
+                                                                                                                       IF msg_B'[self].niso_1_event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                                                                                                                       THEN msg_B'[self].niso_1_event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_WT_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_OTHER_NON_INITIATOR_PEERS
+                                                                                                                       ELSE 0, 
+                                                                                                                       "Failure of assertion at line 1765, column 13.")
+                                                                                                             /\ boomlet_all_peer_approvals_i' = [boomlet_all_peer_approvals_i EXCEPT ![self] = msg_B'[self].non_initiator_tx_approvals]
                                                                                                              /\ boomlet_saved_duress_stage_i' = [boomlet_saved_duress_stage_i EXCEPT ![self] = "initial"]
                                                                                                              /\ boomlet_saved_duress_seq_i' = [boomlet_saved_duress_seq_i EXCEPT ![self] = 1]
                                                                                                              /\ \E space \in DuressCheckSpaces(self, "initial", 1):
                                                                                                                   /\ boomlet_saved_duress_space_i' = [boomlet_saved_duress_space_i EXCEPT ![self] = space]
                                                                                                                   /\ boomlet_pending_duress_nonce_i' = [boomlet_pending_duress_nonce_i EXCEPT ![self] = NonceValue(self, "initial_duress", 1)]
                                                                                                                   /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                                                                                            "Failure of assertion at line 1567, column 17.")
+                                                                                                                            "Failure of assertion at line 1775, column 17.")
                                                                                                                   /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] = WithdrawalNonInitiatorBoomletNisoMessage4(DuressCheckCipher(space, boomlet_pending_duress_nonce_i'[self]))]
                                                                                                                   /\ wire_trace' = (          wire_trace \cup
                                                                                                                                     { WireHop(BoomletActor(self), NisoActor(self), WithdrawalNonInitiatorBoomletNisoMessage4(DuressCheckCipher(space, boomlet_pending_duress_nonce_i'[self]))) })
@@ -3338,7 +3840,7 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                              prevPings >>
                                                                                                         ELSE /\ IF msg_B'[self].kind = "WithdrawalNisoBoomletMessage4"
                                                                                                                    THEN /\ Assert(DuressReplyMatchesSpace(self, boomlet_saved_duress_space_i[self], "initial", boomlet_saved_duress_seq_i[self], boomlet_pending_duress_nonce_i[self], msg_B'[self].duress_signal_index_with_nonce_encrypted_by_st_for_boomlet), 
-                                                                                                                                  "Failure of assertion at line 1573, column 13.")
+                                                                                                                                  "Failure of assertion at line 1781, column 13.")
                                                                                                                         /\ duressSignal' = [duressSignal EXCEPT ![self] =             DerivedDuressSignal(
                                                                                                                                                                           boomlet_saved_duress_space_i[self],
                                                                                                                                                                           Decrypt(msg_B'[self].duress_signal_index_with_nonce_encrypted_by_st_for_boomlet, BoomletActor(self)).content)]
@@ -3348,7 +3850,7 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                         /\ boomlet_duress_placeholder_cipher_i' = [boomlet_duress_placeholder_cipher_i EXCEPT ![self] = PlaceholderCipherForSAR(self, "commit", boomlet_saved_duress_seq_i[self], boomlet_duress_placeholder_plaintext_i'[self])]
                                                                                                                         /\ boomlet_signed_commit_inner_i' = [boomlet_signed_commit_inner_i EXCEPT ![self] = SignedCommitInner(self, boomlet_committed_tx_id_i[self], niso_event_block_height_i[self])]
                                                                                                                         /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                                                                                                  "Failure of assertion at line 1586, column 13.")
+                                                                                                                                  "Failure of assertion at line 1794, column 13.")
                                                                                                                         /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] =                      WithdrawalBoomletNisoMessage4(
                                                                                                                                                                                 CommitCipherForWT(
                                                                                                                                                                                     self,
@@ -3384,7 +3886,7 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                                         prevPings >>
                                                                                                                    ELSE /\ IF msg_B'[self].kind = "WithdrawalNonInitiatorNisoBoomletMessage5"
                                                                                                                               THEN /\ Assert(DuressReplyMatchesSpace(self, boomlet_saved_duress_space_i[self], "initial", boomlet_saved_duress_seq_i[self], boomlet_pending_duress_nonce_i[self], msg_B'[self].duress_signal_index_with_nonce_encrypted_by_st_for_boomlet), 
-                                                                                                                                             "Failure of assertion at line 1601, column 13.")
+                                                                                                                                             "Failure of assertion at line 1809, column 13.")
                                                                                                                                    /\ duressSignal' = [duressSignal EXCEPT ![self] =             DerivedDuressSignal(
                                                                                                                                                                                      boomlet_saved_duress_space_i[self],
                                                                                                                                                                                      Decrypt(msg_B'[self].duress_signal_index_with_nonce_encrypted_by_st_for_boomlet, BoomletActor(self)).content)]
@@ -3401,7 +3903,7 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                                                                                                                              ELSE boomlet_all_peer_approvals_i[self][j]],
                                                                                                                                                                                                                          boomlet_saved_wt_tx_approval_i[self]))]
                                                                                                                                    /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                                                                                                             "Failure of assertion at line 1621, column 13.")
+                                                                                                                                             "Failure of assertion at line 1829, column 13.")
                                                                                                                                    /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] = WithdrawalNonInitiatorBoomletNisoMessage5(boomlet_approvals_bundle_i'[self])]
                                                                                                                                    /\ wire_trace' = (          wire_trace \cup
                                                                                                                                                      { WireHop(BoomletActor(self), NisoActor(self), WithdrawalNonInitiatorBoomletNisoMessage5(boomlet_approvals_bundle_i'[self])) })
@@ -3434,10 +3936,10 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                                                         THEN msg_B'[self].niso_1_event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_PEER_TO_RECEIVING_INITIATOR_PEER_TX_COMMITMENT_BY_NON_INITIATOR_PEERS
                                                                                                                                                         ELSE 0,
                                                                                                                                                         msg_B'[self].niso_1_event_block_height), 
-                                                                                                                                                        "Failure of assertion at line 1626, column 13.")
+                                                                                                                                                        "Failure of assertion at line 1834, column 13.")
                                                                                                                                               /\ boomlet_signed_commit_inner_i' = [boomlet_signed_commit_inner_i EXCEPT ![self] = SignedCommitInner(self, boomlet_committed_tx_id_i[self], msg_B'[self].niso_1_event_block_height)]
                                                                                                                                               /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                                                                                                                        "Failure of assertion at line 1635, column 13.")
+                                                                                                                                                        "Failure of assertion at line 1843, column 13.")
                                                                                                                                               /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] =                      WithdrawalNonInitiatorBoomletNisoMessage6(
                                                                                                                                                                                                       CommitCipherForWT(
                                                                                                                                                                                                           self,
@@ -3475,7 +3977,20 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                                                               prevPings >>
                                                                                                                                          ELSE /\ IF msg_B'[self].kind = "WithdrawalNisoBoomletMessage5"
                                                                                                                                                     THEN /\ Assert(SARReplyValidForPeer(self, boomlet_duress_placeholder_cipher_i[self], msg_B'[self].duress_placeholder_signed_by_sar_encrypted_by_sar_for_boomlet), 
-                                                                                                                                                                   "Failure of assertion at line 1650, column 13.")
+                                                                                                                                                                   "Failure of assertion at line 1858, column 13.")
+                                                                                                                                                         /\ Assert(msg_B'[self].niso_0_event_block_height >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS, 
+                                                                                                                                                                   "Failure of assertion at line 1859, column 13.")
+                                                                                                                                                         /\ Assert(   \A j \in Peers :
+                                                                                                                                                                   WTSignedCommitValid(
+                                                                                                                                                                       msg_B'[self].all_peer_tx_commit_signed_by_boomlet_i_signed_by_wt[j],
+                                                                                                                                                                       j,
+                                                                                                                                                                       boomlet_committed_tx_id_i[self],
+                                                                                                                                                                       IF msg_B'[self].niso_0_event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                                                                                                                                                                       THEN msg_B'[self].niso_0_event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                                                                                                                                                                       ELSE 0,
+                                                                                                                                                                       msg_B'[self].niso_0_event_block_height
+                                                                                                                                                                                    - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS), 
+                                                                                                                                                                   "Failure of assertion at line 1860, column 13.")
                                                                                                                                                          /\ boomlet_commit_collection_i' = [boomlet_commit_collection_i EXCEPT ![self] = msg_B'[self].all_peer_tx_commit_signed_by_boomlet_i_signed_by_wt]
                                                                                                                                                          /\ boomlet_counter_i' = [boomlet_counter_i EXCEPT ![self] = 0]
                                                                                                                                                          /\ boomlet_ping_seq_num_i' = [boomlet_ping_seq_num_i EXCEPT ![self] = 0]
@@ -3485,7 +4000,7 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                                                          /\ boomlet_last_seen_block_i' = [boomlet_last_seen_block_i EXCEPT ![self] = msg_B'[self].niso_0_event_block_height]
                                                                                                                                                          /\ boomlet_duress_placeholder_cipher_i' = [boomlet_duress_placeholder_cipher_i EXCEPT ![self] = PlaceholderCipherForSAR(self, "ping", 0, boomlet_duress_placeholder_plaintext_i[self])]
                                                                                                                                                          /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                                                                                                                                   "Failure of assertion at line 1660, column 13.")
+                                                                                                                                                                   "Failure of assertion at line 1879, column 13.")
                                                                                                                                                          /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] =                      WithdrawalBoomletNisoMessage5(
                                                                                                                                                                                                                  PingCipherForWT(
                                                                                                                                                                                                                      self,
@@ -3520,7 +4035,7 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                                                                          prevPings >>
                                                                                                                                                     ELSE /\ IF msg_B'[self].kind = "WithdrawalNisoBoomletMessage6"
                                                                                                                                                                THEN /\ Assert(SARReplyValidForPeer(self, boomlet_duress_placeholder_cipher_i[self], msg_B'[self].duress_placeholder_signed_by_sar_encrypted_by_sar_for_boomlet), 
-                                                                                                                                                                              "Failure of assertion at line 1679, column 13.")
+                                                                                                                                                                              "Failure of assertion at line 1898, column 13.")
                                                                                                                                                                     /\ Assert(   PongDeliveryValidForPeer(
                                                                                                                                                                               msg_B'[self],
                                                                                                                                                                               self,
@@ -3528,7 +4043,7 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                                                                               msg_B'[self].niso_0_event_block_height,
                                                                                                                                                                               boomlet_prev_pings_i[self],
                                                                                                                                                                               boomlet_known_reached_i[self]), 
-                                                                                                                                                                              "Failure of assertion at line 1680, column 13.")
+                                                                                                                                                                              "Failure of assertion at line 1899, column 13.")
                                                                                                                                                                     /\ signedPong' = [signedPong EXCEPT ![self] = Decrypt(msg_B'[self].pong_signed_by_wt_encrypted_by_wt_for_boomlet, BoomletActor(self))]
                                                                                                                                                                     /\ prevPings' = [prevPings EXCEPT ![self] = SignedContent(signedPong'[self]).prev_pings.items]
                                                                                                                                                                     /\ IF CanIncrementCounter(self, msg_B'[self].niso_0_event_block_height, prevPings'[self], boomlet_last_seen_block_i[self])
@@ -3547,15 +4062,15 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                                                                           ELSE /\ TRUE
                                                                                                                                                                                /\ UNCHANGED boomlet_last_seen_block_i
                                                                                                                                                                     /\ boomlet_prev_pings_i' = [boomlet_prev_pings_i EXCEPT ![self] = prevPings'[self]]
-                                                                                                                                                                    /\ \E refresh \in BOOLEAN:
-                                                                                                                                                                         IF refresh
+                                                                                                                                                                    /\ \E prng_draw \in RecurringDuressPRNGDraws:
+                                                                                                                                                                         IF RecurringDuressCheckFires(prng_draw)
                                                                                                                                                                             THEN /\ boomlet_saved_duress_stage_i' = [boomlet_saved_duress_stage_i EXCEPT ![self] = "loop"]
                                                                                                                                                                                  /\ boomlet_saved_duress_seq_i' = [boomlet_saved_duress_seq_i EXCEPT ![self] = boomlet_saved_duress_seq_i[self] + 1]
                                                                                                                                                                                  /\ \E space \in DuressCheckSpaces(self, "loop", boomlet_saved_duress_seq_i'[self]):
                                                                                                                                                                                       /\ boomlet_saved_duress_space_i' = [boomlet_saved_duress_space_i EXCEPT ![self] = space]
                                                                                                                                                                                       /\ boomlet_pending_duress_nonce_i' = [boomlet_pending_duress_nonce_i EXCEPT ![self] = NonceValue(self, "loop_duress", boomlet_saved_duress_seq_i'[self])]
                                                                                                                                                                                       /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                                                                                                                                                                "Failure of assertion at line 1712, column 25.")
+                                                                                                                                                                                                "Failure of assertion at line 1931, column 25.")
                                                                                                                                                                                       /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] = WithdrawalBoomletNisoMessage6(DuressCheckCipher(space, boomlet_pending_duress_nonce_i'[self]))]
                                                                                                                                                                                       /\ wire_trace' = (          wire_trace \cup
                                                                                                                                                                                                         { WireHop(BoomletActor(self), NisoActor(self), WithdrawalBoomletNisoMessage6(DuressCheckCipher(space, boomlet_pending_duress_nonce_i'[self]))) })
@@ -3564,7 +4079,7 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                                                                             ELSE /\ boomlet_ping_seq_num_i' = [boomlet_ping_seq_num_i EXCEPT ![self] = boomlet_ping_seq_num_i[self] + 1]
                                                                                                                                                                                  /\ boomlet_duress_placeholder_cipher_i' = [boomlet_duress_placeholder_cipher_i EXCEPT ![self] = PlaceholderCipherForSAR(self, "ping", boomlet_ping_seq_num_i'[self], boomlet_duress_placeholder_plaintext_i[self])]
                                                                                                                                                                                  /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                                                                                                                                                           "Failure of assertion at line 1721, column 21.")
+                                                                                                                                                                                           "Failure of assertion at line 1940, column 21.")
                                                                                                                                                                                  /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] =                      WithdrawalBoomletNisoMessage7(
                                                                                                                                                                                                                                          PingCipherForWT(
                                                                                                                                                                                                                                              self,
@@ -3578,10 +4093,10 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                                                                                                        PingCipherForWT(
                                                                                                                                                                                                            self,
                                                                                                                                                                                                            boomlet_committed_tx_id_i[self],
-                                                                                                                                                                                                           boomlet_last_seen_block_i'[self],
-                                                                                                                                                                                                           boomlet_ping_seq_num_i'[self],
-                                                                                                                                                                                                           boomlet_reached_mystery_flag_i'[self],
-                                                                                                                                                                                                           boomlet_duress_placeholder_cipher_i'[self]))) })
+                                                                                                                                                                                                       boomlet_last_seen_block_i'[self],
+                                                                                                                                                                                                       boomlet_ping_seq_num_i'[self],
+                                                                                                                                                                                                       boomlet_reached_mystery_flag_i'[self],
+                                                                                                                                                                                                       boomlet_duress_placeholder_cipher_i'[self]))) })
                                                                                                                                                                                  /\ UNCHANGED << boomlet_saved_duress_space_i, 
                                                                                                                                                                                                  boomlet_saved_duress_stage_i, 
                                                                                                                                                                                                  boomlet_saved_duress_seq_i, 
@@ -3598,7 +4113,7 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                                                                                     hydrated >>
                                                                                                                                                                ELSE /\ IF msg_B'[self].kind = "WithdrawalNisoBoomletMessage7"
                                                                                                                                                                           THEN /\ Assert(DuressReplyMatchesSpace(self, boomlet_saved_duress_space_i[self], "loop", boomlet_saved_duress_seq_i[self], boomlet_pending_duress_nonce_i[self], msg_B'[self].duress_signal_index_with_nonce_encrypted_by_st_for_boomlet), 
-                                                                                                                                                                                         "Failure of assertion at line 1742, column 13.")
+                                                                                                                                                                                         "Failure of assertion at line 1961, column 13.")
                                                                                                                                                                                /\ duressSignal' = [duressSignal EXCEPT ![self] =             DerivedDuressSignal(
                                                                                                                                                                                                                                  boomlet_saved_duress_space_i[self],
                                                                                                                                                                                                                                  Decrypt(msg_B'[self].duress_signal_index_with_nonce_encrypted_by_st_for_boomlet, BoomletActor(self)).content)]
@@ -3608,7 +4123,7 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                                                                                /\ boomlet_ping_seq_num_i' = [boomlet_ping_seq_num_i EXCEPT ![self] = boomlet_ping_seq_num_i[self] + 1]
                                                                                                                                                                                /\ boomlet_duress_placeholder_cipher_i' = [boomlet_duress_placeholder_cipher_i EXCEPT ![self] = PlaceholderCipherForSAR(self, "ping", boomlet_ping_seq_num_i'[self], boomlet_duress_placeholder_plaintext_i'[self])]
                                                                                                                                                                                /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                                                                                                                                                         "Failure of assertion at line 1754, column 13.")
+                                                                                                                                                                                         "Failure of assertion at line 1973, column 13.")
                                                                                                                                                                                /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] =                      WithdrawalBoomletNisoMessage7(
                                                                                                                                                                                                                                        PingCipherForWT(
                                                                                                                                                                                                                                            self,
@@ -3643,12 +4158,15 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                                                                                                hydrated >>
                                                                                                                                                                           ELSE /\ IF msg_B'[self].kind = "WithdrawalNisoBoomletMessage8"
                                                                                                                                                                                      THEN /\ hydrated' = [hydrated EXCEPT ![self] = msg_B'[self].hydrated_psbt]
+                                                                                                                                                                                          /\ Assert(   \A j \in Peers :
+                                                                                                                                                                                                    ReachedPingSigValid(msg_B'[self].reached_pings_collection.items[j], j, boomlet_committed_tx_id_i[self]), 
+                                                                                                                                                                                                    "Failure of assertion at line 1993, column 13.")
                                                                                                                                                                                           /\ Assert(hydrated'[self].tx_id = boomlet_committed_tx_id_i[self], 
-                                                                                                                                                                                                    "Failure of assertion at line 1774, column 13.")
+                                                                                                                                                                                                    "Failure of assertion at line 1995, column 13.")
                                                                                                                                                                                           /\ boomlet_saved_psbt_i' = [boomlet_saved_psbt_i EXCEPT ![self] = hydrated'[self]]
                                                                                                                                                                                           /\ boomlet_ready_to_sign_i' = [boomlet_ready_to_sign_i EXCEPT ![self] = TRUE]
                                                                                                                                                                                           /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                                                                                                                                                                    "Failure of assertion at line 1777, column 13.")
+                                                                                                                                                                                                    "Failure of assertion at line 1998, column 13.")
                                                                                                                                                                                           /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] = WithdrawalBoomletNisoMessage8]
                                                                                                                                                                                           /\ wire_trace' = (wire_trace \cup { WireHop(BoomletActor(self), NisoActor(self), WithdrawalBoomletNisoMessage8) })
                                                                                                                                                                                           /\ UNCHANGED << boomlet_mystery_i, 
@@ -3668,9 +4186,9 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                                                                                                                                                                                           boomlet_prev_pings_i >>
                                                                                                                                                                                      ELSE /\ IF msg_B'[self].kind = "WithdrawalNisoBoomletMessage9"
                                                                                                                                                                                                 THEN /\ Assert(boomlet_signed_psbt_i[self] # NoValue, 
-                                                                                                                                                                                                               "Failure of assertion at line 1781, column 13.")
+                                                                                                                                                                                                               "Failure of assertion at line 2002, column 13.")
                                                                                                                                                                                                      /\ Assert(boomlet_to_niso[self] = NoValue, 
-                                                                                                                                                                                                               "Failure of assertion at line 1782, column 13.")
+                                                                                                                                                                                                               "Failure of assertion at line 2003, column 13.")
                                                                                                                                                                                                      /\ boomlet_to_niso' = [boomlet_to_niso EXCEPT ![self] = WithdrawalBoomletNisoMessage9(boomlet_signed_psbt_i[self])]
                                                                                                                                                                                                      /\ wire_trace' = (wire_trace \cup { WireHop(BoomletActor(self), NisoActor(self), WithdrawalBoomletNisoMessage9(boomlet_signed_psbt_i[self])) })
                                                                                                                                                                                                      /\ boomlet_saved_psbt_i' = [boomlet_saved_psbt_i EXCEPT ![self] = NoValue]
@@ -3730,7 +4248,7 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                 /\ IF msg_B'[self].kind = "WithdrawalIsoBoomletMessage1"
                                       THEN /\ boomlet_pubnonce_boom_i' = [boomlet_pubnonce_boom_i EXCEPT ![self] = PubnonceBoom(self, TxOfPsbt[BasePsbtOf(boomlet_saved_psbt_i[self])])]
                                            /\ Assert(boomlet_to_iso[self] = NoValue, 
-                                                     "Failure of assertion at line 1810, column 13.")
+                                                     "Failure of assertion at line 2031, column 13.")
                                            /\ boomlet_to_iso' = [boomlet_to_iso EXCEPT ![self] =                     WithdrawalBoomletIsoMessage1(
                                                                                                  boomlet_saved_psbt_i[self],
                                                                                                  boomerang_descriptor,
@@ -3745,11 +4263,11 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                            /\ UNCHANGED << boomlet_signed_psbt_i, 
                                                            boomlet_partialsig_boom_i >>
                                       ELSE /\ Assert(msg_B'[self].kind = "WithdrawalIsoBoomletMessage2", 
-                                                     "Failure of assertion at line 1823, column 13.")
+                                                     "Failure of assertion at line 2044, column 13.")
                                            /\ boomlet_partialsig_boom_i' = [boomlet_partialsig_boom_i EXCEPT ![self] = PartialSigBoom(self, TxOfPsbt[BasePsbtOf(boomlet_saved_psbt_i[self])])]
                                            /\ boomlet_signed_psbt_i' = [boomlet_signed_psbt_i EXCEPT ![self] = PsbtSigned(self, TxOfPsbt[BasePsbtOf(boomlet_saved_psbt_i[self])], boomlet_saved_psbt_i[self])]
                                            /\ Assert(boomlet_to_iso[self] = NoValue, 
-                                                     "Failure of assertion at line 1826, column 13.")
+                                                     "Failure of assertion at line 2047, column 13.")
                                            /\ boomlet_to_iso' = [boomlet_to_iso EXCEPT ![self] = WithdrawalBoomletIsoMessage2(boomlet_partialsig_boom_i'[self])]
                                            /\ wire_trace' = (wire_trace \cup { WireHop(BoomletActor(self), IsoActor(self), WithdrawalBoomletIsoMessage2(boomlet_partialsig_boom_i'[self])) })
                                            /\ UNCHANGED boomlet_pubnonce_boom_i
@@ -3795,6 +4313,7 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                      niso_saved_psbt_i, niso_saved_tx_id_i, 
                                      niso_event_block_height_i, 
                                      niso_initiator_peer_id_i, 
+                                     niso_saved_wt_tx_approval_i, 
                                      niso_hydrated_psbt_i, 
                                      niso_reached_pings_collection_i, 
                                      st_last_txid_with_nonce_i, 
@@ -3816,7 +4335,9 @@ BoomletLoop(self) == /\ pc[self] = "BoomletLoop"
                                      wt_ping_sar_reply_i, wt_signed_commit_i, 
                                      wt_last_accepted_ping_i, 
                                      wt_reached_pings_collection, 
-                                     wt_last_pong_height, wt_signed_psbt_i, 
+                                     wt_last_pong_height, 
+                                     wt_relayed_all_approvals, 
+                                     wt_relayed_all_commits, wt_signed_psbt_i, 
                                      wt_broadcast, user_to_niso, niso_to_user, 
                                      user_to_st, st_to_user, niso_to_st, 
                                      st_to_niso, user_to_iso, iso_to_user, 
@@ -3837,7 +4358,7 @@ IsoLoop(self) == /\ pc[self] = "IsoLoop"
                             /\ user_to_iso' = [user_to_iso EXCEPT ![self] = NoValue]
                             /\ IF msg_I'[self].kind = "WithdrawalIsoInput1"
                                   THEN /\ Assert(iso_to_boomlet[self] = NoValue, 
-                                                 "Failure of assertion at line 1843, column 13.")
+                                                 "Failure of assertion at line 2064, column 13.")
                                        /\ iso_to_boomlet' = [iso_to_boomlet EXCEPT ![self] = WithdrawalIsoBoomletMessage1]
                                        /\ wire_trace' = (wire_trace \cup { WireHop(IsoActor(self), BoomletActor(self), WithdrawalIsoBoomletMessage1) })
                                   ELSE /\ TRUE
@@ -3853,17 +4374,17 @@ IsoLoop(self) == /\ pc[self] = "IsoLoop"
                                   THEN /\ iso_pubnonce_normal_i' = [iso_pubnonce_normal_i EXCEPT ![self] = PubnonceNormal(self, TxOfPsbt[BasePsbtOf(msg_I'[self].psbt)])]
                                        /\ iso_partialsig_normal_i' = [iso_partialsig_normal_i EXCEPT ![self] = PartialSigNormal(self, TxOfPsbt[BasePsbtOf(msg_I'[self].psbt)])]
                                        /\ Assert(iso_to_boomlet[self] = NoValue, 
-                                                 "Failure of assertion at line 1853, column 13.")
+                                                 "Failure of assertion at line 2074, column 13.")
                                        /\ iso_to_boomlet' = [iso_to_boomlet EXCEPT ![self] = WithdrawalIsoBoomletMessage2(iso_pubnonce_normal_i'[self], iso_partialsig_normal_i'[self])]
                                        /\ wire_trace' = (          wire_trace \cup
                                                          { WireHop(IsoActor(self), BoomletActor(self), WithdrawalIsoBoomletMessage2(iso_pubnonce_normal_i'[self], iso_partialsig_normal_i'[self])) })
                                        /\ UNCHANGED << iso_signed_psbt_i, 
                                                        iso_to_user >>
                                   ELSE /\ Assert(msg_I'[self].kind = "WithdrawalBoomletIsoMessage2", 
-                                                 "Failure of assertion at line 1858, column 13.")
+                                                 "Failure of assertion at line 2079, column 13.")
                                        /\ iso_signed_psbt_i' = [iso_signed_psbt_i EXCEPT ![self] = PsbtSigned(self, msg_I'[self].partialsig_boom.tx_id, boomlet_saved_psbt_i[self])]
                                        /\ Assert(iso_to_user[self] = NoValue, 
-                                                 "Failure of assertion at line 1860, column 13.")
+                                                 "Failure of assertion at line 2081, column 13.")
                                        /\ iso_to_user' = [iso_to_user EXCEPT ![self] = WithdrawalIsoOutput1]
                                        /\ wire_trace' = (wire_trace \cup { WireHop(IsoActor(self), UserActor(self), WithdrawalIsoOutput1) })
                                        /\ UNCHANGED << iso_pubnonce_normal_i, 
@@ -3885,6 +4406,7 @@ IsoLoop(self) == /\ pc[self] = "IsoLoop"
                                  niso_saved_psbt_i, niso_saved_tx_id_i, 
                                  niso_event_block_height_i, 
                                  niso_initiator_peer_id_i, 
+                                 niso_saved_wt_tx_approval_i, 
                                  niso_hydrated_psbt_i, 
                                  niso_reached_pings_collection_i, 
                                  boomlet_saved_psbt_i, 
@@ -3923,7 +4445,8 @@ IsoLoop(self) == /\ pc[self] = "IsoLoop"
                                  wt_commit_sar_reply_i, wt_ping_sar_reply_i, 
                                  wt_signed_commit_i, wt_last_accepted_ping_i, 
                                  wt_reached_pings_collection, 
-                                 wt_last_pong_height, wt_signed_psbt_i, 
+                                 wt_last_pong_height, wt_relayed_all_approvals, 
+                                 wt_relayed_all_commits, wt_signed_psbt_i, 
                                  wt_broadcast, user_to_niso, niso_to_user, 
                                  user_to_st, st_to_user, boomlet_to_niso, 
                                  niso_to_boomlet, niso_to_st, st_to_niso, 
@@ -3944,9 +4467,8 @@ SARLoop(self) == /\ pc[self] = "SARLoop"
                  /\ wt_to_sar' = [wt_to_sar EXCEPT ![self] = NoValue]
                  /\ plaintext' = [plaintext EXCEPT ![self] = Decrypt(msg_SA'[self].duress_placeholder, SARActor(self))]
                  /\ Assert(plaintext'[self] # NoValue, 
-                           "Failure of assertion at line 1878, column 5.")
-                 /\ IF /\ plaintext'[self] # SafePaddingPlaintext(self, "commit", 0)
-                       /\ plaintext'[self] # SafePaddingPlaintext(self, "ping", 0)
+                           "Failure of assertion at line 2099, column 5.")
+                 /\ IF /\ ~IsSafePaddingPlaintextForPeer(self, plaintext'[self])
                        /\ <<BoomletActor(self), msg_SA'[self].duress_placeholder.iv>> \notin sar_seen_placeholder_iv_i[self]
                        THEN /\ sar_escalated_i' = [sar_escalated_i EXCEPT ![self] = TRUE]
                             /\ sar_last_doxing_identifier_i' = [sar_last_doxing_identifier_i EXCEPT ![self] = DoxingDataIdentifier(plaintext'[self])]
@@ -3957,7 +4479,7 @@ SARLoop(self) == /\ pc[self] = "SARLoop"
                                             sar_last_doxing_identifier_i >>
                  /\ reply' = [reply EXCEPT ![self] = SARReplyCipher(self, msg_SA'[self].duress_placeholder)]
                  /\ Assert(sar_to_wt[self] = NoValue, 
-                           "Failure of assertion at line 1888, column 5.")
+                           "Failure of assertion at line 2108, column 5.")
                  /\ IF msg_SA'[self].kind = "WithdrawalWtSarsMessage2"
                        THEN /\ sar_to_wt' = [sar_to_wt EXCEPT ![self] = WithdrawalSarsWtMessage2(reply'[self])]
                             /\ wire_trace' = (wire_trace \cup { WireHop(SARActor(self), WTActor, WithdrawalSarsWtMessage2(reply'[self])) })
@@ -3981,6 +4503,7 @@ SARLoop(self) == /\ pc[self] = "SARLoop"
                                  niso_saved_psbt_i, niso_saved_tx_id_i, 
                                  niso_event_block_height_i, 
                                  niso_initiator_peer_id_i, 
+                                 niso_saved_wt_tx_approval_i, 
                                  niso_hydrated_psbt_i, 
                                  niso_reached_pings_collection_i, 
                                  boomlet_saved_psbt_i, 
@@ -4018,7 +4541,8 @@ SARLoop(self) == /\ pc[self] = "SARLoop"
                                  wt_commit_sar_reply_i, wt_ping_sar_reply_i, 
                                  wt_signed_commit_i, wt_last_accepted_ping_i, 
                                  wt_reached_pings_collection, 
-                                 wt_last_pong_height, wt_signed_psbt_i, 
+                                 wt_last_pong_height, wt_relayed_all_approvals, 
+                                 wt_relayed_all_commits, wt_signed_psbt_i, 
                                  wt_broadcast, user_to_niso, niso_to_user, 
                                  user_to_st, st_to_user, boomlet_to_niso, 
                                  niso_to_boomlet, niso_to_st, st_to_niso, 
@@ -4034,284 +4558,395 @@ SARLoop(self) == /\ pc[self] = "SARLoop"
 SARFlow(self) == SARLoop(self)
 
 WTLoop == /\ pc[WT_ID] = "WTLoop"
-          /\ (\E i \in Peers : niso_to_wt[i] # NoValue) \/ (\E i \in Peers : sar_to_wt[i] # NoValue)
-          /\ IF \E i \in Peers : sar_to_wt[i] # NoValue
-                THEN /\ \E i \in { j \in Peers : sar_to_wt[j] # NoValue }:
-                          /\ peer' = i
-                          /\ msg' = sar_to_wt[peer']
-                          /\ sar_to_wt' = [sar_to_wt EXCEPT ![peer'] = NoValue]
-                          /\ IF wt_pending_sar_stage_i[peer'] = "commit"
-                                THEN /\ Assert(SARReplyValidForPeer(peer', wt_pending_placeholder_i[peer'], msg'.duress_placeholder_signed_by_sar_encrypted_by_sar_for_boomlet), 
-                                               "Failure of assertion at line 1919, column 17.")
-                                     /\ wt_commit_sar_reply_i' = [wt_commit_sar_reply_i EXCEPT ![peer'] = msg'.duress_placeholder_signed_by_sar_encrypted_by_sar_for_boomlet]
-                                     /\ signedInner' = wt_pending_signed_inner_i[peer']
-                                     /\ wtHeight' = most_work_bitcoin_block_height
-                                     /\ Assert(   CommitSigValid(
-                                               signedInner',
-                                               peer',
-                                               wt_saved_tx_id,
-                                               0,
-                                               wtHeight'), 
-                                               "Failure of assertion at line 1923, column 17.")
-                                     /\ wt_signed_commit_i' = [wt_signed_commit_i EXCEPT ![peer'] = SignatureOnMessage(WTActor, signedInner')]
-                                     /\ IF peer' = INITIATOR
-                                           THEN /\ Assert(\A j \in NonInitiators : wt_to_niso[j] = NoValue, 
-                                                          "Failure of assertion at line 1931, column 21.")
-                                                /\ wt_to_niso' =           [j \in Peers |->
-                                                                 IF j \in NonInitiators
-                                                                 THEN WithdrawalWtNonInitiatorNisoMessage3(wt_signed_commit_i'[peer'])
-                                                                 ELSE wt_to_niso[j]]
-                                                /\ wire_trace' = (          wire_trace \cup
-                                                                  { WireHop(WTActor, NisoActor(j), WithdrawalWtNonInitiatorNisoMessage3(wt_signed_commit_i'[peer'])) : j \in NonInitiators })
-                                           ELSE /\ IF \A j \in Peers : wt_signed_commit_i'[j] # NoValue
-                                                      THEN /\ Assert(\A j \in Peers : wt_to_niso[j] = NoValue, 
-                                                                     "Failure of assertion at line 1939, column 21.")
-                                                           /\ wt_to_niso' =           [j \in Peers |->
-                                                                            IF j = INITIATOR
-                                                                            THEN WithdrawalWtNisoMessage2(wt_signed_commit_i', wt_commit_sar_reply_i'[j])
-                                                                            ELSE WithdrawalWtNonInitiatorNisoMessage4(wt_signed_commit_i', wt_commit_sar_reply_i'[j])]
-                                                           /\ wire_trace' = (          wire_trace \cup
-                                                                             { WireHop(WTActor, NisoActor(j),
-                                                                                 IF j = INITIATOR
-                                                                                 THEN WithdrawalWtNisoMessage2(wt_signed_commit_i', wt_commit_sar_reply_i'[j])
-                                                                                 ELSE WithdrawalWtNonInitiatorNisoMessage4(wt_signed_commit_i', wt_commit_sar_reply_i'[j])) : j \in Peers })
-                                                      ELSE /\ TRUE
-                                                           /\ UNCHANGED << wire_trace, 
-                                                                           wt_to_niso >>
-                                     /\ UNCHANGED << wt_ping_sar_reply_i, 
-                                                     wt_last_accepted_ping_i, 
-                                                     wt_reached_pings_collection, 
-                                                     wt_last_pong_height >>
-                                ELSE /\ Assert(wt_pending_sar_stage_i[peer'] = "ping", 
-                                               "Failure of assertion at line 1951, column 17.")
-                                     /\ Assert(SARReplyValidForPeer(peer', wt_pending_placeholder_i[peer'], msg'.duress_placeholder_signed_by_sar_encrypted_by_sar_for_boomlet), 
-                                               "Failure of assertion at line 1952, column 17.")
-                                     /\ wt_ping_sar_reply_i' = [wt_ping_sar_reply_i EXCEPT ![peer'] = msg'.duress_placeholder_signed_by_sar_encrypted_by_sar_for_boomlet]
-                                     /\ signedInner' = wt_pending_signed_inner_i[peer']
-                                     /\ wtHeight' = most_work_bitcoin_block_height
-                                     /\ Assert(   PingSigValid(
-                                               signedInner',
-                                               peer',
-                                               wt_saved_tx_id,
-                                               IF wtHeight' >= TOLERANCE_IN_BLOCKS_FROM_CREATING_PING_TO_RECEIVING_ALL_PINGS_BY_WT_AND_HAVING_SAR_RESPONSE_BACK_TO_WT
-                                               THEN wtHeight' - TOLERANCE_IN_BLOCKS_FROM_CREATING_PING_TO_RECEIVING_ALL_PINGS_BY_WT_AND_HAVING_SAR_RESPONSE_BACK_TO_WT
-                                               ELSE 0,
-                                               wtHeight'), 
-                                               "Failure of assertion at line 1956, column 17.")
-                                     /\ IF wt_last_accepted_ping_i[peer'] = NoValue
-                                           THEN /\ Assert(~SignedContent(signedInner').reached_mystery_flag, 
-                                                          "Failure of assertion at line 1965, column 21.")
-                                           ELSE /\ Assert(SignedContent(signedInner').ping_seq_num > SignedContent(wt_last_accepted_ping_i[peer']).ping_seq_num, 
-                                                          "Failure of assertion at line 1967, column 21.")
-                                     /\ wt_last_accepted_ping_i' = [wt_last_accepted_ping_i EXCEPT ![peer'] = signedInner']
-                                     /\ IF SignedContent(signedInner').reached_mystery_flag
-                                           THEN /\ wt_reached_pings_collection' = [wt_reached_pings_collection EXCEPT ![peer'] = signedInner']
-                                           ELSE /\ TRUE
-                                                /\ UNCHANGED wt_reached_pings_collection
-                                     /\ IF AllReached(wt_reached_pings_collection')
-                                           THEN /\ Assert(\A j \in Peers : wt_to_niso[j] = NoValue, 
-                                                          "Failure of assertion at line 1974, column 21.")
-                                                /\ wt_to_niso' = [j \in Peers |-> WithdrawalWtNisoMessage4(ReachedPingsCollection(wt_reached_pings_collection'))]
-                                                /\ wire_trace' = (          wire_trace \cup
-                                                                  { WireHop(WTActor, NisoActor(j), WithdrawalWtNisoMessage4(ReachedPingsCollection(wt_reached_pings_collection'))) : j \in Peers })
-                                                /\ UNCHANGED wt_last_pong_height
-                                           ELSE /\ IF /\ \A j \in Peers : wt_last_accepted_ping_i'[j] # NoValue
-                                                      /\ (wt_last_pong_height = NoValue
-                                                          \/ most_work_bitcoin_block_height >= wt_last_pong_height + REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PING_AND_PONG)
-                                                      THEN /\ Assert(\A j \in Peers : wt_to_niso[j] = NoValue, 
-                                                                     "Failure of assertion at line 1982, column 21.")
-                                                           /\ wt_last_pong_height' = most_work_bitcoin_block_height
-                                                           /\ wt_to_niso' =           [j \in Peers |->
-                                                                            WithdrawalWtNisoMessage3(
-                                                                                PongCipherForPeer(j, wt_saved_tx_id, most_work_bitcoin_block_height, [k \in (Peers \ {j}) |-> wt_last_accepted_ping_i'[k]]),
-                                                                                wt_ping_sar_reply_i'[j])]
-                                                           /\ wire_trace' = (          wire_trace \cup
-                                                                             { WireHop(WTActor, NisoActor(j),
-                                                                                 WithdrawalWtNisoMessage3(
-                                                                                     PongCipherForPeer(j, wt_saved_tx_id, most_work_bitcoin_block_height, [k \in (Peers \ {j}) |-> wt_last_accepted_ping_i'[k]]),
-                                                                                     wt_ping_sar_reply_i'[j])) : j \in Peers })
-                                                      ELSE /\ TRUE
-                                                           /\ UNCHANGED << wire_trace, 
-                                                                           wt_last_pong_height, 
-                                                                           wt_to_niso >>
-                                     /\ UNCHANGED << wt_commit_sar_reply_i, 
-                                                     wt_signed_commit_i >>
-                          /\ wt_pending_sar_stage_i' = [wt_pending_sar_stage_i EXCEPT ![peer'] = NoValue]
-                          /\ wt_pending_placeholder_i' = [wt_pending_placeholder_i EXCEPT ![peer'] = NoValue]
-                          /\ wt_pending_signed_inner_i' = [wt_pending_signed_inner_i EXCEPT ![peer'] = NoValue]
+          /\    (\E i \in Peers : niso_to_wt[i] # NoValue)
+             \/ (\E i \in Peers : sar_to_wt[i] # NoValue)
+             \/ ( /\ ~wt_relayed_all_approvals
+                  /\ \A j \in NonInitiators : wt_noninitiator_tx_approval_i[j] # NoValue
+                  /\ \A j \in Peers : wt_to_niso[j] = NoValue
+                  /\ most_work_bitcoin_block_height >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                  /\ \A j \in NonInitiators :
+                       /\ SignedContent(wt_noninitiator_tx_approval_i[j]).event_block_height >=
+                          Max2(
+                              SignedContent(wt_saved_wt_tx_approval).event_block_height,
+                              IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                              THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                              ELSE 0)
+                       /\ SignedContent(wt_noninitiator_tx_approval_i[j]).event_block_height <=
+                          most_work_bitcoin_block_height
+                              - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                  /\ SignedContent(wt_initiator_tx_approval).event_block_height >=
+                     Max2(
+                          IF SignedContent(wt_saved_wt_tx_approval).event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                          THEN SignedContent(wt_saved_wt_tx_approval).event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                          ELSE 0,
+                          IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                          THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                          ELSE 0)
+                  /\ SignedContent(wt_initiator_tx_approval).event_block_height <= SignedContent(wt_saved_wt_tx_approval).event_block_height )
+             \/ ( /\ ~wt_relayed_all_commits
+                  /\ \A j \in Peers : wt_signed_commit_i[j] # NoValue /\ wt_commit_sar_reply_i[j] # NoValue
+                  /\ \A j \in Peers : wt_to_niso[j] = NoValue
+                  /\ most_work_bitcoin_block_height >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS
+                  /\ \A j \in Peers :
+                       /\ SignedContent(SignedContent(wt_signed_commit_i[j])).event_block_height >=
+                          IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                          THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                          ELSE 0
+                       /\ SignedContent(SignedContent(wt_signed_commit_i[j])).event_block_height <=
+                          most_work_bitcoin_block_height
+                              - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS )
+          /\ IF /\ ~wt_relayed_all_approvals
+                /\ \A j \in NonInitiators : wt_noninitiator_tx_approval_i[j] # NoValue
+                /\ \A j \in Peers : wt_to_niso[j] = NoValue
+                /\ most_work_bitcoin_block_height >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                /\ \A j \in NonInitiators :
+                     /\ SignedContent(wt_noninitiator_tx_approval_i[j]).event_block_height >=
+                        Max2(
+                             SignedContent(wt_saved_wt_tx_approval).event_block_height,
+                             IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                             THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_NON_INITIATOR_PEERS_TO_RECEIVING_NON_INITIATOR_TX_APPROVAL_BY_INITIATOR_PEER
+                             ELSE 0)
+                     /\ SignedContent(wt_noninitiator_tx_approval_i[j]).event_block_height <=
+                        most_work_bitcoin_block_height
+                            - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_INITIATOR_PEER_TX_APPROVAL_AND_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                /\ SignedContent(wt_initiator_tx_approval).event_block_height >=
+                   Max2(
+                         IF SignedContent(wt_saved_wt_tx_approval).event_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                         THEN SignedContent(wt_saved_wt_tx_approval).event_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_TX_APPROVAL_BY_WT
+                         ELSE 0,
+                         IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                         THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_APPROVAL_BY_INITIATOR_PEER_TO_RECEIVING_ALL_NON_INITIATOR_TX_APPROVALS_BY_INITIATOR_PEER
+                         ELSE 0)
+                /\ SignedContent(wt_initiator_tx_approval).event_block_height <= SignedContent(wt_saved_wt_tx_approval).event_block_height
+                THEN /\ wt_to_niso' =           [j \in Peers |->
+                                      IF j = INITIATOR
+                                      THEN WithdrawalWtNisoMessage1([k \in Peers |->
+                                              IF k = INITIATOR THEN wt_initiator_tx_approval ELSE wt_noninitiator_tx_approval_i[k]],
+                                            wt_saved_wt_tx_approval)
+                                      ELSE WithdrawalWtNonInitiatorNisoMessage2([k \in NonInitiators |-> wt_noninitiator_tx_approval_i[k]])]
+                     /\ wt_relayed_all_approvals' = TRUE
+                     /\ wire_trace' = (          wire_trace \cup
+                                       { WireHop(WTActor, NisoActor(j),
+                                           IF j = INITIATOR
+                                           THEN WithdrawalWtNisoMessage1([k \in Peers |->
+                                                   IF k = INITIATOR THEN wt_initiator_tx_approval ELSE wt_noninitiator_tx_approval_i[k]],
+                                                 wt_saved_wt_tx_approval)
+                                           ELSE WithdrawalWtNonInitiatorNisoMessage2([k \in NonInitiators |-> wt_noninitiator_tx_approval_i[k]])) : j \in Peers })
                      /\ UNCHANGED << wt_saved_tx_id, wt_saved_wt_tx_approval, 
                                      wt_initiator_tx_approval, 
                                      wt_noninitiator_tx_approval_i, 
-                                     wt_approvals_bundle_i, wt_signed_psbt_i, 
+                                     wt_approvals_bundle_i, 
+                                     wt_pending_sar_stage_i, 
+                                     wt_pending_placeholder_i, 
+                                     wt_pending_signed_inner_i, 
+                                     wt_commit_sar_reply_i, 
+                                     wt_ping_sar_reply_i, wt_signed_commit_i, 
+                                     wt_last_accepted_ping_i, 
+                                     wt_reached_pings_collection, 
+                                     wt_last_pong_height, 
+                                     wt_relayed_all_commits, wt_signed_psbt_i, 
                                      wt_broadcast, niso_to_wt, wt_to_sar, 
-                                     decrypted, placeholder >>
-                ELSE /\ \E i \in { j \in Peers : niso_to_wt[j] # NoValue }:
-                          /\ peer' = i
-                          /\ msg' = niso_to_wt[peer']
-                          /\ niso_to_wt' = [niso_to_wt EXCEPT ![peer'] = NoValue]
-                          /\ IF msg'.kind = "WithdrawalNisoWtMessage1"
-                                THEN /\ decrypted' = Decrypt(msg'.initiator_tx_approval_signed_by_boomlet_0_encrypted_by_boomlet_0_for_wt, WTActor)
-                                     /\ Assert(   TxApprovalSigValid(
-                                               decrypted',
-                                               INITIATOR,
-                                               SignedContent(decrypted').tx_id,
-                                               0,
-                                               most_work_bitcoin_block_height), 
-                                               "Failure of assertion at line 2006, column 17.")
-                                     /\ wt_saved_tx_id' = SignedContent(decrypted').tx_id
-                                     /\ wt_initiator_tx_approval' = decrypted'
-                                     /\ wt_saved_wt_tx_approval' = SignedWTTxApproval(wt_saved_tx_id', most_work_bitcoin_block_height, INITIATOR)
-                                     /\ Assert(\A j \in NonInitiators : wt_to_niso[j] = NoValue, 
-                                               "Failure of assertion at line 2015, column 17.")
-                                     /\ wt_to_niso' =           [j \in Peers |->
-                                                      IF j \in NonInitiators
-                                                      THEN WithdrawalWtNonInitiatorNisoMessage1(
-                                                          wt_saved_wt_tx_approval',
-                                                          wt_initiator_tx_approval',
-                                                          msg'.psbt_encrypted_collection.items[j])
-                                                      ELSE wt_to_niso[j]]
-                                     /\ wire_trace' = (          wire_trace \cup
-                                                       { WireHop(WTActor, NisoActor(j),
-                                                           WithdrawalWtNonInitiatorNisoMessage1(
-                                                               wt_saved_wt_tx_approval',
-                                                               wt_initiator_tx_approval',
-                                                               msg'.psbt_encrypted_collection.items[j])) : j \in NonInitiators })
-                                     /\ UNCHANGED << wt_noninitiator_tx_approval_i, 
-                                                     wt_approvals_bundle_i, 
-                                                     wt_pending_sar_stage_i, 
-                                                     wt_pending_placeholder_i, 
-                                                     wt_pending_signed_inner_i, 
-                                                     wt_signed_psbt_i, 
-                                                     wt_broadcast, wt_to_sar, 
-                                                     signedInner, placeholder >>
-                                ELSE /\ IF msg'.kind = "WithdrawalNonInitiatorNisoWtMessage1"
-                                           THEN /\ decrypted' = Decrypt(msg'.peer_i_tx_approval_signed_by_boomlet_i_encrypted_by_boomlet_i_for_wt, WTActor)
-                                                /\ Assert(   TxApprovalSigValid(
-                                                          decrypted',
-                                                          peer',
-                                                          wt_saved_tx_id,
-                                                          SignedContent(wt_saved_wt_tx_approval).event_block_height,
-                                                          most_work_bitcoin_block_height), 
-                                                          "Failure of assertion at line 2031, column 17.")
-                                                /\ wt_noninitiator_tx_approval_i' = [wt_noninitiator_tx_approval_i EXCEPT ![peer'] = decrypted']
-                                                /\ IF \A j \in NonInitiators : wt_noninitiator_tx_approval_i'[j] # NoValue
-                                                      THEN /\ Assert(\A j \in Peers : wt_to_niso[j] = NoValue, 
-                                                                     "Failure of assertion at line 2039, column 21.")
+                                     sar_to_wt, msg, peer, decrypted, 
+                                     signedInner, placeholder, wtHeight >>
+                ELSE /\ IF /\ ~wt_relayed_all_commits
+                           /\ \A j \in Peers : wt_signed_commit_i[j] # NoValue /\ wt_commit_sar_reply_i[j] # NoValue
+                           /\ \A j \in Peers : wt_to_niso[j] = NoValue
+                           /\ most_work_bitcoin_block_height >= REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS
+                           /\ \A j \in Peers :
+                                /\ SignedContent(SignedContent(wt_signed_commit_i[j])).event_block_height >=
+                                   IF most_work_bitcoin_block_height >= TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                                   THEN most_work_bitcoin_block_height - TOLERANCE_IN_BLOCKS_FROM_TX_COMMITMENT_BY_INITIATOR_AND_NON_INITIATOR_PEERS_TO_RECEIVING_TX_COMMITMENT_BY_ALL_PEERS
+                                   ELSE 0
+                                /\ SignedContent(SignedContent(wt_signed_commit_i[j])).event_block_height <=
+                                   most_work_bitcoin_block_height
+                                       - REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PEER_TX_COMMITMENT_AND_RECEIVING_ALL_TX_COMMITMENT_BY_PEERS
+                           THEN /\ wt_to_niso' =           [j \in Peers |->
+                                                 IF j = INITIATOR
+                                                 THEN WithdrawalWtNisoMessage2(wt_signed_commit_i, wt_commit_sar_reply_i[j])
+                                                 ELSE WithdrawalWtNonInitiatorNisoMessage4(wt_signed_commit_i, wt_commit_sar_reply_i[j])]
+                                /\ wt_relayed_all_commits' = TRUE
+                                /\ wire_trace' = (          wire_trace \cup
+                                                  { WireHop(WTActor, NisoActor(j),
+                                                      IF j = INITIATOR
+                                                      THEN WithdrawalWtNisoMessage2(wt_signed_commit_i, wt_commit_sar_reply_i[j])
+                                                      ELSE WithdrawalWtNonInitiatorNisoMessage4(wt_signed_commit_i, wt_commit_sar_reply_i[j])) : j \in Peers })
+                                /\ UNCHANGED << wt_saved_tx_id, 
+                                                wt_saved_wt_tx_approval, 
+                                                wt_initiator_tx_approval, 
+                                                wt_noninitiator_tx_approval_i, 
+                                                wt_approvals_bundle_i, 
+                                                wt_pending_sar_stage_i, 
+                                                wt_pending_placeholder_i, 
+                                                wt_pending_signed_inner_i, 
+                                                wt_commit_sar_reply_i, 
+                                                wt_ping_sar_reply_i, 
+                                                wt_signed_commit_i, 
+                                                wt_last_accepted_ping_i, 
+                                                wt_reached_pings_collection, 
+                                                wt_last_pong_height, 
+                                                wt_signed_psbt_i, wt_broadcast, 
+                                                niso_to_wt, wt_to_sar, 
+                                                sar_to_wt, msg, peer, 
+                                                decrypted, signedInner, 
+                                                placeholder, wtHeight >>
+                           ELSE /\ IF \E i \in Peers : sar_to_wt[i] # NoValue
+                                      THEN /\ \E i \in { j \in Peers : sar_to_wt[j] # NoValue }:
+                                                /\ peer' = i
+                                                /\ msg' = sar_to_wt[peer']
+                                                /\ sar_to_wt' = [sar_to_wt EXCEPT ![peer'] = NoValue]
+                                                /\ IF wt_pending_sar_stage_i[peer'] = "commit"
+                                                      THEN /\ Assert(SARReplyValidForPeer(peer', wt_pending_placeholder_i[peer'], msg'.duress_placeholder_signed_by_sar_encrypted_by_sar_for_boomlet), 
+                                                                     "Failure of assertion at line 2236, column 17.")
+                                                           /\ wt_commit_sar_reply_i' = [wt_commit_sar_reply_i EXCEPT ![peer'] = msg'.duress_placeholder_signed_by_sar_encrypted_by_sar_for_boomlet]
+                                                           /\ signedInner' = wt_pending_signed_inner_i[peer']
+                                                           /\ wtHeight' = most_work_bitcoin_block_height
+                                                           /\ Assert(   CommitSigValid(
+                                                                     signedInner',
+                                                                     peer',
+                                                                     wt_saved_tx_id,
+                                                                     0,
+                                                                     wtHeight'), 
+                                                                     "Failure of assertion at line 2240, column 17.")
+                                                           /\ wt_signed_commit_i' = [wt_signed_commit_i EXCEPT ![peer'] = SignatureOnMessage(WTActor, signedInner')]
+                                                           /\ IF peer' = INITIATOR
+                                                                 THEN /\ Assert(\A j \in NonInitiators : wt_to_niso[j] = NoValue, 
+                                                                                "Failure of assertion at line 2248, column 21.")
+                                                                      /\ wt_to_niso' =           [j \in Peers |->
+                                                                                       IF j \in NonInitiators
+                                                                                       THEN WithdrawalWtNonInitiatorNisoMessage3(wt_signed_commit_i'[peer'])
+                                                                                       ELSE wt_to_niso[j]]
+                                                                      /\ wire_trace' = (          wire_trace \cup
+                                                                                        { WireHop(WTActor, NisoActor(j), WithdrawalWtNonInitiatorNisoMessage3(wt_signed_commit_i'[peer'])) : j \in NonInitiators })
+                                                                 ELSE /\ TRUE
+                                                                      /\ UNCHANGED << wire_trace, 
+                                                                                      wt_to_niso >>
+                                                           /\ UNCHANGED << wt_ping_sar_reply_i, 
+                                                                           wt_last_accepted_ping_i, 
+                                                                           wt_reached_pings_collection, 
+                                                                           wt_last_pong_height >>
+                                                      ELSE /\ Assert(wt_pending_sar_stage_i[peer'] = "ping", 
+                                                                     "Failure of assertion at line 2257, column 17.")
+                                                           /\ Assert(SARReplyValidForPeer(peer', wt_pending_placeholder_i[peer'], msg'.duress_placeholder_signed_by_sar_encrypted_by_sar_for_boomlet), 
+                                                                     "Failure of assertion at line 2258, column 17.")
+                                                           /\ wt_ping_sar_reply_i' = [wt_ping_sar_reply_i EXCEPT ![peer'] = msg'.duress_placeholder_signed_by_sar_encrypted_by_sar_for_boomlet]
+                                                           /\ signedInner' = wt_pending_signed_inner_i[peer']
+                                                           /\ wtHeight' = most_work_bitcoin_block_height
+                                                           /\ Assert(   PingSigValid(
+                                                                     signedInner',
+                                                                     peer',
+                                                                     wt_saved_tx_id,
+                                                                     IF wtHeight' >= TOLERANCE_IN_BLOCKS_FROM_CREATING_PING_TO_RECEIVING_ALL_PINGS_BY_WT_AND_HAVING_SAR_RESPONSE_BACK_TO_WT
+                                                                     THEN wtHeight' - TOLERANCE_IN_BLOCKS_FROM_CREATING_PING_TO_RECEIVING_ALL_PINGS_BY_WT_AND_HAVING_SAR_RESPONSE_BACK_TO_WT
+                                                                     ELSE 0,
+                                                                     wtHeight'), 
+                                                                     "Failure of assertion at line 2262, column 17.")
+                                                           /\ IF wt_last_accepted_ping_i[peer'] = NoValue
+                                                                 THEN /\ Assert(~SignedContent(signedInner').reached_mystery_flag, 
+                                                                                "Failure of assertion at line 2271, column 21.")
+                                                                 ELSE /\ Assert(SignedContent(signedInner').ping_seq_num > SignedContent(wt_last_accepted_ping_i[peer']).ping_seq_num, 
+                                                                                "Failure of assertion at line 2273, column 21.")
+                                                           /\ wt_last_accepted_ping_i' = [wt_last_accepted_ping_i EXCEPT ![peer'] = signedInner']
+                                                           /\ IF SignedContent(signedInner').reached_mystery_flag
+                                                                 THEN /\ wt_reached_pings_collection' = [wt_reached_pings_collection EXCEPT ![peer'] = signedInner']
+                                                                 ELSE /\ TRUE
+                                                                      /\ UNCHANGED wt_reached_pings_collection
+                                                           /\ IF AllReached(wt_reached_pings_collection')
+                                                                 THEN /\ Assert(\A j \in Peers : wt_to_niso[j] = NoValue, 
+                                                                                "Failure of assertion at line 2280, column 21.")
+                                                                      /\ wt_to_niso' = [j \in Peers |-> WithdrawalWtNisoMessage4(ReachedPingsCollection(wt_reached_pings_collection'))]
+                                                                      /\ wire_trace' = (          wire_trace \cup
+                                                                                        { WireHop(WTActor, NisoActor(j), WithdrawalWtNisoMessage4(ReachedPingsCollection(wt_reached_pings_collection'))) : j \in Peers })
+                                                                      /\ UNCHANGED wt_last_pong_height
+                                                                 ELSE /\ IF /\ \A j \in Peers : wt_last_accepted_ping_i'[j] # NoValue
+                                                                            /\ (wt_last_pong_height = NoValue
+                                                                                \/ most_work_bitcoin_block_height >= wt_last_pong_height + REQUIRED_MINIMUM_DISTANCE_IN_BLOCKS_BETWEEN_PING_AND_PONG)
+                                                                            THEN /\ Assert(\A j \in Peers : wt_to_niso[j] = NoValue, 
+                                                                                           "Failure of assertion at line 2288, column 21.")
+                                                                                 /\ wt_last_pong_height' = most_work_bitcoin_block_height
+                                                                                 /\ wt_to_niso' =           [j \in Peers |->
+                                                                                                  WithdrawalWtNisoMessage3(
+                                                                                                      PongCipherForPeer(j, wt_saved_tx_id, most_work_bitcoin_block_height, [k \in (Peers \ {j}) |-> wt_last_accepted_ping_i'[k]]),
+                                                                                                      wt_ping_sar_reply_i'[j])]
+                                                                                 /\ wire_trace' = (          wire_trace \cup
+                                                                                                   { WireHop(WTActor, NisoActor(j),
+                                                                                                       WithdrawalWtNisoMessage3(
+                                                                                                           PongCipherForPeer(j, wt_saved_tx_id, most_work_bitcoin_block_height, [k \in (Peers \ {j}) |-> wt_last_accepted_ping_i'[k]]),
+                                                                                                           wt_ping_sar_reply_i'[j])) : j \in Peers })
+                                                                            ELSE /\ TRUE
+                                                                                 /\ UNCHANGED << wire_trace, 
+                                                                                                 wt_last_pong_height, 
+                                                                                                 wt_to_niso >>
+                                                           /\ UNCHANGED << wt_commit_sar_reply_i, 
+                                                                           wt_signed_commit_i >>
+                                                /\ wt_pending_sar_stage_i' = [wt_pending_sar_stage_i EXCEPT ![peer'] = NoValue]
+                                                /\ wt_pending_placeholder_i' = [wt_pending_placeholder_i EXCEPT ![peer'] = NoValue]
+                                                /\ wt_pending_signed_inner_i' = [wt_pending_signed_inner_i EXCEPT ![peer'] = NoValue]
+                                           /\ UNCHANGED << wt_saved_tx_id, 
+                                                           wt_saved_wt_tx_approval, 
+                                                           wt_initiator_tx_approval, 
+                                                           wt_noninitiator_tx_approval_i, 
+                                                           wt_approvals_bundle_i, 
+                                                           wt_signed_psbt_i, 
+                                                           wt_broadcast, 
+                                                           niso_to_wt, 
+                                                           wt_to_sar, 
+                                                           decrypted, 
+                                                           placeholder >>
+                                      ELSE /\ \E i \in { j \in Peers : niso_to_wt[j] # NoValue }:
+                                                /\ peer' = i
+                                                /\ msg' = niso_to_wt[peer']
+                                                /\ niso_to_wt' = [niso_to_wt EXCEPT ![peer'] = NoValue]
+                                                /\ IF msg'.kind = "WithdrawalNisoWtMessage1"
+                                                      THEN /\ decrypted' = Decrypt(msg'.initiator_tx_approval_signed_by_boomlet_0_encrypted_by_boomlet_0_for_wt, WTActor)
+                                                           /\ Assert(   TxApprovalSigValid(
+                                                                     decrypted',
+                                                                     INITIATOR,
+                                                                     SignedContent(decrypted').tx_id,
+                                                                     0,
+                                                                     most_work_bitcoin_block_height), 
+                                                                     "Failure of assertion at line 2312, column 17.")
+                                                           /\ wt_saved_tx_id' = SignedContent(decrypted').tx_id
+                                                           /\ wt_initiator_tx_approval' = decrypted'
+                                                           /\ wt_saved_wt_tx_approval' = SignedWTTxApproval(wt_saved_tx_id', most_work_bitcoin_block_height, INITIATOR)
+                                                           /\ Assert(\A j \in NonInitiators : wt_to_niso[j] = NoValue, 
+                                                                     "Failure of assertion at line 2321, column 17.")
                                                            /\ wt_to_niso' =           [j \in Peers |->
-                                                                            IF j = INITIATOR
-                                                                            THEN WithdrawalWtNisoMessage1([k \in Peers |->
-                                                                                    IF k = INITIATOR THEN wt_initiator_tx_approval ELSE wt_noninitiator_tx_approval_i'[k]],
-                                                                                  wt_saved_wt_tx_approval)
-                                                                            ELSE WithdrawalWtNonInitiatorNisoMessage2([k \in NonInitiators |-> wt_noninitiator_tx_approval_i'[k]])]
+                                                                            IF j \in NonInitiators
+                                                                            THEN WithdrawalWtNonInitiatorNisoMessage1(
+                                                                                wt_saved_wt_tx_approval',
+                                                                                wt_initiator_tx_approval',
+                                                                                msg'.psbt_encrypted_collection.items[j])
+                                                                            ELSE wt_to_niso[j]]
                                                            /\ wire_trace' = (          wire_trace \cup
                                                                              { WireHop(WTActor, NisoActor(j),
-                                                                                 IF j = INITIATOR
-                                                                                 THEN WithdrawalWtNisoMessage1([k \in Peers |->
-                                                                                         IF k = INITIATOR THEN wt_initiator_tx_approval ELSE wt_noninitiator_tx_approval_i'[k]],
-                                                                                       wt_saved_wt_tx_approval)
-                                                                                 ELSE WithdrawalWtNonInitiatorNisoMessage2([k \in NonInitiators |-> wt_noninitiator_tx_approval_i'[k]])) : j \in Peers })
-                                                      ELSE /\ TRUE
-                                                           /\ UNCHANGED << wire_trace, 
-                                                                           wt_to_niso >>
-                                                /\ UNCHANGED << wt_approvals_bundle_i, 
-                                                                wt_pending_sar_stage_i, 
-                                                                wt_pending_placeholder_i, 
-                                                                wt_pending_signed_inner_i, 
-                                                                wt_signed_psbt_i, 
-                                                                wt_broadcast, 
-                                                                wt_to_sar, 
-                                                                signedInner, 
-                                                                placeholder >>
-                                           ELSE /\ IF msg'.kind = "WithdrawalNonInitiatorNisoWtMessage2"
-                                                      THEN /\ Assert(   ApprovalsBundleSigValid(
-                                                                     msg'.approvals_signed_by_boomlet_i,
-                                                                     peer',
-                                                                     [k \in Peers |->
-                                                                         IF k = INITIATOR THEN wt_initiator_tx_approval ELSE wt_noninitiator_tx_approval_i[k]],
-                                                                     wt_saved_wt_tx_approval), 
-                                                                     "Failure of assertion at line 2055, column 17.")
-                                                           /\ wt_approvals_bundle_i' = [wt_approvals_bundle_i EXCEPT ![peer'] = msg'.approvals_signed_by_boomlet_i]
-                                                           /\ UNCHANGED << wire_trace, 
+                                                                                 WithdrawalWtNonInitiatorNisoMessage1(
+                                                                                     wt_saved_wt_tx_approval',
+                                                                                     wt_initiator_tx_approval',
+                                                                                     msg'.psbt_encrypted_collection.items[j])) : j \in NonInitiators })
+                                                           /\ UNCHANGED << wt_noninitiator_tx_approval_i, 
+                                                                           wt_approvals_bundle_i, 
                                                                            wt_pending_sar_stage_i, 
                                                                            wt_pending_placeholder_i, 
                                                                            wt_pending_signed_inner_i, 
                                                                            wt_signed_psbt_i, 
                                                                            wt_broadcast, 
                                                                            wt_to_sar, 
-                                                                           decrypted, 
                                                                            signedInner, 
                                                                            placeholder >>
-                                                      ELSE /\ IF msg'.kind = "WithdrawalNisoWtMessage2"
-                                                                 THEN /\ decrypted' = Decrypt(msg'.peer_0_tx_commit_signed_by_boomlet_0_padded_signed_by_boomlet_0_encrypted_by_boomlet_0_for_wt, WTActor)
-                                                                      /\ Assert(ValidSig(decrypted', BoomletActor(peer')), 
-                                                                                "Failure of assertion at line 2064, column 17.")
-                                                                      /\ placeholder' = PaddedPadding(SignedContent(decrypted'))
-                                                                      /\ signedInner' = PaddedContent(SignedContent(decrypted'))
-                                                                      /\ wt_pending_sar_stage_i' = [wt_pending_sar_stage_i EXCEPT ![peer'] = "commit"]
-                                                                      /\ wt_pending_placeholder_i' = [wt_pending_placeholder_i EXCEPT ![peer'] = placeholder']
-                                                                      /\ wt_pending_signed_inner_i' = [wt_pending_signed_inner_i EXCEPT ![peer'] = signedInner']
-                                                                      /\ Assert(wt_to_sar[peer'] = NoValue, 
-                                                                                "Failure of assertion at line 2070, column 17.")
-                                                                      /\ wt_to_sar' = [wt_to_sar EXCEPT ![peer'] = WithdrawalWtSarsMessage1(placeholder', BoomletActor(peer'))]
-                                                                      /\ wire_trace' = (wire_trace \cup { WireHop(WTActor, SARActor(peer'), WithdrawalWtSarsMessage1(placeholder', BoomletActor(peer'))) })
-                                                                      /\ UNCHANGED << wt_signed_psbt_i, 
-                                                                                      wt_broadcast >>
-                                                                 ELSE /\ IF msg'.kind = "WithdrawalNonInitiatorNisoWtMessage3"
-                                                                            THEN /\ decrypted' = Decrypt(msg'.peer_i_tx_commit_signed_by_boomlet_i_padded_signed_by_boomlet_i_encrypted_by_boomlet_i_for_wt, WTActor)
-                                                                                 /\ Assert(ValidSig(decrypted', BoomletActor(peer')), 
-                                                                                           "Failure of assertion at line 2075, column 17.")
-                                                                                 /\ placeholder' = PaddedPadding(SignedContent(decrypted'))
-                                                                                 /\ signedInner' = PaddedContent(SignedContent(decrypted'))
-                                                                                 /\ wt_pending_sar_stage_i' = [wt_pending_sar_stage_i EXCEPT ![peer'] = "commit"]
-                                                                                 /\ wt_pending_placeholder_i' = [wt_pending_placeholder_i EXCEPT ![peer'] = placeholder']
-                                                                                 /\ wt_pending_signed_inner_i' = [wt_pending_signed_inner_i EXCEPT ![peer'] = signedInner']
-                                                                                 /\ Assert(wt_to_sar[peer'] = NoValue, 
-                                                                                           "Failure of assertion at line 2081, column 17.")
-                                                                                 /\ wt_to_sar' = [wt_to_sar EXCEPT ![peer'] = WithdrawalNonInitiatorWtSarsMessage1(placeholder', BoomletActor(peer'))]
-                                                                                 /\ wire_trace' = (wire_trace \cup { WireHop(WTActor, SARActor(peer'), WithdrawalNonInitiatorWtSarsMessage1(placeholder', BoomletActor(peer'))) })
-                                                                                 /\ UNCHANGED << wt_signed_psbt_i, 
-                                                                                                 wt_broadcast >>
-                                                                            ELSE /\ IF msg'.kind \in {"WithdrawalNisoWtMessage3", "WithdrawalNisoWtMessage4", "WithdrawalNonInitiatorNisoWtMessage4"}
-                                                                                       THEN /\ decrypted' = Decrypt(msg'.peer_i_ping_signed_by_boomlet_i_padded_signed_by_boomlet_i_encrypted_by_boomlet_i_for_wt, WTActor)
+                                                      ELSE /\ IF msg'.kind = "WithdrawalNonInitiatorNisoWtMessage1"
+                                                                 THEN /\ decrypted' = Decrypt(msg'.peer_i_tx_approval_signed_by_boomlet_i_encrypted_by_boomlet_i_for_wt, WTActor)
+                                                                      /\ Assert(   TxApprovalSigValid(
+                                                                                decrypted',
+                                                                                peer',
+                                                                                wt_saved_tx_id,
+                                                                                SignedContent(wt_saved_wt_tx_approval).event_block_height,
+                                                                                most_work_bitcoin_block_height), 
+                                                                                "Failure of assertion at line 2337, column 17.")
+                                                                      /\ wt_noninitiator_tx_approval_i' = [wt_noninitiator_tx_approval_i EXCEPT ![peer'] = decrypted']
+                                                                      /\ UNCHANGED << wire_trace, 
+                                                                                      wt_approvals_bundle_i, 
+                                                                                      wt_pending_sar_stage_i, 
+                                                                                      wt_pending_placeholder_i, 
+                                                                                      wt_pending_signed_inner_i, 
+                                                                                      wt_signed_psbt_i, 
+                                                                                      wt_broadcast, 
+                                                                                      wt_to_sar, 
+                                                                                      signedInner, 
+                                                                                      placeholder >>
+                                                                 ELSE /\ IF msg'.kind = "WithdrawalNonInitiatorNisoWtMessage2"
+                                                                            THEN /\ Assert(   ApprovalsBundleSigValid(
+                                                                                           msg'.approvals_signed_by_boomlet_i,
+                                                                                           peer',
+                                                                                           [k \in Peers |->
+                                                                                               IF k = INITIATOR THEN wt_initiator_tx_approval ELSE wt_noninitiator_tx_approval_i[k]],
+                                                                                           wt_saved_wt_tx_approval), 
+                                                                                           "Failure of assertion at line 2345, column 17.")
+                                                                                 /\ wt_approvals_bundle_i' = [wt_approvals_bundle_i EXCEPT ![peer'] = msg'.approvals_signed_by_boomlet_i]
+                                                                                 /\ UNCHANGED << wire_trace, 
+                                                                                                 wt_pending_sar_stage_i, 
+                                                                                                 wt_pending_placeholder_i, 
+                                                                                                 wt_pending_signed_inner_i, 
+                                                                                                 wt_signed_psbt_i, 
+                                                                                                 wt_broadcast, 
+                                                                                                 wt_to_sar, 
+                                                                                                 decrypted, 
+                                                                                                 signedInner, 
+                                                                                                 placeholder >>
+                                                                            ELSE /\ IF msg'.kind = "WithdrawalNisoWtMessage2"
+                                                                                       THEN /\ decrypted' = Decrypt(msg'.peer_0_tx_commit_signed_by_boomlet_0_padded_signed_by_boomlet_0_encrypted_by_boomlet_0_for_wt, WTActor)
                                                                                             /\ Assert(ValidSig(decrypted', BoomletActor(peer')), 
-                                                                                                      "Failure of assertion at line 2086, column 17.")
+                                                                                                      "Failure of assertion at line 2354, column 17.")
                                                                                             /\ placeholder' = PaddedPadding(SignedContent(decrypted'))
                                                                                             /\ signedInner' = PaddedContent(SignedContent(decrypted'))
-                                                                                            /\ wt_pending_sar_stage_i' = [wt_pending_sar_stage_i EXCEPT ![peer'] = "ping"]
+                                                                                            /\ wt_pending_sar_stage_i' = [wt_pending_sar_stage_i EXCEPT ![peer'] = "commit"]
                                                                                             /\ wt_pending_placeholder_i' = [wt_pending_placeholder_i EXCEPT ![peer'] = placeholder']
                                                                                             /\ wt_pending_signed_inner_i' = [wt_pending_signed_inner_i EXCEPT ![peer'] = signedInner']
                                                                                             /\ Assert(wt_to_sar[peer'] = NoValue, 
-                                                                                                      "Failure of assertion at line 2092, column 17.")
-                                                                                            /\ wt_to_sar' = [wt_to_sar EXCEPT ![peer'] = WithdrawalWtSarsMessage2(placeholder', BoomletActor(peer'))]
-                                                                                            /\ wire_trace' = (wire_trace \cup { WireHop(WTActor, SARActor(peer'), WithdrawalWtSarsMessage2(placeholder', BoomletActor(peer'))) })
+                                                                                                      "Failure of assertion at line 2360, column 17.")
+                                                                                            /\ wt_to_sar' = [wt_to_sar EXCEPT ![peer'] = WithdrawalWtSarsMessage1(placeholder', BoomletActor(peer'))]
+                                                                                            /\ wire_trace' = (wire_trace \cup { WireHop(WTActor, SARActor(peer'), WithdrawalWtSarsMessage1(placeholder', BoomletActor(peer'))) })
                                                                                             /\ UNCHANGED << wt_signed_psbt_i, 
                                                                                                             wt_broadcast >>
-                                                                                       ELSE /\ Assert(msg'.kind = "WithdrawalNisoWtMessage5", 
-                                                                                                      "Failure of assertion at line 2096, column 17.")
-                                                                                            /\ wt_signed_psbt_i' = [wt_signed_psbt_i EXCEPT ![peer'] = msg'.psbt_signed_i]
-                                                                                            /\ IF AllPeerSignedPsbtsPresent(wt_signed_psbt_i')
-                                                                                                  THEN /\ wt_broadcast' = Broadcast(wt_saved_tx_id, Collection(wt_signed_psbt_i'))
-                                                                                                  ELSE /\ TRUE
-                                                                                                       /\ UNCHANGED wt_broadcast
-                                                                                            /\ UNCHANGED << wire_trace, 
-                                                                                                            wt_pending_sar_stage_i, 
-                                                                                                            wt_pending_placeholder_i, 
-                                                                                                            wt_pending_signed_inner_i, 
-                                                                                                            wt_to_sar, 
-                                                                                                            decrypted, 
-                                                                                                            signedInner, 
-                                                                                                            placeholder >>
-                                                           /\ UNCHANGED wt_approvals_bundle_i
-                                                /\ UNCHANGED << wt_noninitiator_tx_approval_i, 
-                                                                wt_to_niso >>
-                                     /\ UNCHANGED << wt_saved_tx_id, 
-                                                     wt_saved_wt_tx_approval, 
-                                                     wt_initiator_tx_approval >>
-                     /\ UNCHANGED << wt_commit_sar_reply_i, 
-                                     wt_ping_sar_reply_i, wt_signed_commit_i, 
-                                     wt_last_accepted_ping_i, 
-                                     wt_reached_pings_collection, 
-                                     wt_last_pong_height, sar_to_wt, wtHeight >>
+                                                                                       ELSE /\ IF msg'.kind = "WithdrawalNonInitiatorNisoWtMessage3"
+                                                                                                  THEN /\ decrypted' = Decrypt(msg'.peer_i_tx_commit_signed_by_boomlet_i_padded_signed_by_boomlet_i_encrypted_by_boomlet_i_for_wt, WTActor)
+                                                                                                       /\ Assert(ValidSig(decrypted', BoomletActor(peer')), 
+                                                                                                                 "Failure of assertion at line 2365, column 17.")
+                                                                                                       /\ placeholder' = PaddedPadding(SignedContent(decrypted'))
+                                                                                                       /\ signedInner' = PaddedContent(SignedContent(decrypted'))
+                                                                                                       /\ wt_pending_sar_stage_i' = [wt_pending_sar_stage_i EXCEPT ![peer'] = "commit"]
+                                                                                                       /\ wt_pending_placeholder_i' = [wt_pending_placeholder_i EXCEPT ![peer'] = placeholder']
+                                                                                                       /\ wt_pending_signed_inner_i' = [wt_pending_signed_inner_i EXCEPT ![peer'] = signedInner']
+                                                                                                       /\ Assert(wt_to_sar[peer'] = NoValue, 
+                                                                                                                 "Failure of assertion at line 2371, column 17.")
+                                                                                                       /\ wt_to_sar' = [wt_to_sar EXCEPT ![peer'] = WithdrawalNonInitiatorWtSarsMessage1(placeholder', BoomletActor(peer'))]
+                                                                                                       /\ wire_trace' = (wire_trace \cup { WireHop(WTActor, SARActor(peer'), WithdrawalNonInitiatorWtSarsMessage1(placeholder', BoomletActor(peer'))) })
+                                                                                                       /\ UNCHANGED << wt_signed_psbt_i, 
+                                                                                                                       wt_broadcast >>
+                                                                                                  ELSE /\ IF msg'.kind \in {"WithdrawalNisoWtMessage3", "WithdrawalNisoWtMessage4", "WithdrawalNonInitiatorNisoWtMessage4"}
+                                                                                                             THEN /\ decrypted' = Decrypt(msg'.peer_i_ping_signed_by_boomlet_i_padded_signed_by_boomlet_i_encrypted_by_boomlet_i_for_wt, WTActor)
+                                                                                                                  /\ Assert(ValidSig(decrypted', BoomletActor(peer')), 
+                                                                                                                            "Failure of assertion at line 2376, column 17.")
+                                                                                                                  /\ placeholder' = PaddedPadding(SignedContent(decrypted'))
+                                                                                                                  /\ signedInner' = PaddedContent(SignedContent(decrypted'))
+                                                                                                                  /\ wt_pending_sar_stage_i' = [wt_pending_sar_stage_i EXCEPT ![peer'] = "ping"]
+                                                                                                                  /\ wt_pending_placeholder_i' = [wt_pending_placeholder_i EXCEPT ![peer'] = placeholder']
+                                                                                                                  /\ wt_pending_signed_inner_i' = [wt_pending_signed_inner_i EXCEPT ![peer'] = signedInner']
+                                                                                                                  /\ Assert(wt_to_sar[peer'] = NoValue, 
+                                                                                                                            "Failure of assertion at line 2382, column 17.")
+                                                                                                                  /\ wt_to_sar' = [wt_to_sar EXCEPT ![peer'] = WithdrawalWtSarsMessage2(placeholder', BoomletActor(peer'))]
+                                                                                                                  /\ wire_trace' = (wire_trace \cup { WireHop(WTActor, SARActor(peer'), WithdrawalWtSarsMessage2(placeholder', BoomletActor(peer'))) })
+                                                                                                                  /\ UNCHANGED << wt_signed_psbt_i, 
+                                                                                                                                  wt_broadcast >>
+                                                                                                             ELSE /\ Assert(msg'.kind = "WithdrawalNisoWtMessage5", 
+                                                                                                                            "Failure of assertion at line 2386, column 17.")
+                                                                                                                  /\ wt_signed_psbt_i' = [wt_signed_psbt_i EXCEPT ![peer'] = msg'.psbt_signed_i]
+                                                                                                                  /\ IF AllPeerSignedPsbtsPresent(wt_signed_psbt_i')
+                                                                                                                        THEN /\ wt_broadcast' = Broadcast(wt_saved_tx_id, Collection(wt_signed_psbt_i'))
+                                                                                                                        ELSE /\ TRUE
+                                                                                                                             /\ UNCHANGED wt_broadcast
+                                                                                                                  /\ UNCHANGED << wire_trace, 
+                                                                                                                                  wt_pending_sar_stage_i, 
+                                                                                                                                  wt_pending_placeholder_i, 
+                                                                                                                                  wt_pending_signed_inner_i, 
+                                                                                                                                  wt_to_sar, 
+                                                                                                                                  decrypted, 
+                                                                                                                                  signedInner, 
+                                                                                                                                  placeholder >>
+                                                                                 /\ UNCHANGED wt_approvals_bundle_i
+                                                                      /\ UNCHANGED wt_noninitiator_tx_approval_i
+                                                           /\ UNCHANGED << wt_saved_tx_id, 
+                                                                           wt_saved_wt_tx_approval, 
+                                                                           wt_initiator_tx_approval, 
+                                                                           wt_to_niso >>
+                                           /\ UNCHANGED << wt_commit_sar_reply_i, 
+                                                           wt_ping_sar_reply_i, 
+                                                           wt_signed_commit_i, 
+                                                           wt_last_accepted_ping_i, 
+                                                           wt_reached_pings_collection, 
+                                                           wt_last_pong_height, 
+                                                           sar_to_wt, wtHeight >>
+                                /\ UNCHANGED wt_relayed_all_commits
+                     /\ UNCHANGED wt_relayed_all_approvals
           /\ pc' = [pc EXCEPT ![WT_ID] = "WTLoop"]
           /\ UNCHANGED << boomerang_descriptor, peer_id_collection, 
                           st_identity_pubkey_i, sar_pubkey_i, doxing_key_i, 
@@ -4322,7 +4957,8 @@ WTLoop == /\ pc[WT_ID] = "WTLoop"
                           user_sent_iso_credentials_i, 
                           user_sent_connect_back_to_niso_i, niso_saved_psbt_i, 
                           niso_saved_tx_id_i, niso_event_block_height_i, 
-                          niso_initiator_peer_id_i, niso_hydrated_psbt_i, 
+                          niso_initiator_peer_id_i, 
+                          niso_saved_wt_tx_approval_i, niso_hydrated_psbt_i, 
                           niso_reached_pings_collection_i, 
                           boomlet_saved_psbt_i, boomlet_committed_tx_id_i, 
                           boomlet_pending_txid_nonce_i, 
@@ -4370,9 +5006,9 @@ Tick == /\ pc["ENV"] = "Tick"
                         user_sent_iso_credentials_i, 
                         user_sent_connect_back_to_niso_i, niso_saved_psbt_i, 
                         niso_saved_tx_id_i, niso_event_block_height_i, 
-                        niso_initiator_peer_id_i, niso_hydrated_psbt_i, 
-                        niso_reached_pings_collection_i, boomlet_saved_psbt_i, 
-                        boomlet_committed_tx_id_i, 
+                        niso_initiator_peer_id_i, niso_saved_wt_tx_approval_i, 
+                        niso_hydrated_psbt_i, niso_reached_pings_collection_i, 
+                        boomlet_saved_psbt_i, boomlet_committed_tx_id_i, 
                         boomlet_pending_txid_nonce_i, 
                         boomlet_saved_duress_space_i, 
                         boomlet_saved_duress_stage_i, 
@@ -4402,7 +5038,8 @@ Tick == /\ pc["ENV"] = "Tick"
                         wt_pending_signed_inner_i, wt_commit_sar_reply_i, 
                         wt_ping_sar_reply_i, wt_signed_commit_i, 
                         wt_last_accepted_ping_i, wt_reached_pings_collection, 
-                        wt_last_pong_height, wt_signed_psbt_i, wt_broadcast, 
+                        wt_last_pong_height, wt_relayed_all_approvals, 
+                        wt_relayed_all_commits, wt_signed_psbt_i, wt_broadcast, 
                         user_to_niso, niso_to_user, user_to_st, st_to_user, 
                         boomlet_to_niso, niso_to_boomlet, niso_to_st, 
                         st_to_niso, user_to_iso, iso_to_user, boomlet_to_iso, 
@@ -4458,6 +5095,13 @@ HydratedPsbtPreservesCommittedTx ==
 
 WTRelayRequiresAllSigned ==
     wt_broadcast = NoValue \/ AllPeerSignedPsbtsPresent(wt_signed_psbt_i)
+
+SARDoxingIdentifiersExcludeSafePadding ==
+    \A i \in Peers :
+        sar_last_doxing_identifier_i[i] = NoValue
+        \/ ~IsSafePaddingPlaintextForPeer(
+                i,
+                sar_last_doxing_identifier_i[i].duress_placeholder_payload)
 
 NisoVisibleState(i) ==
     [ saved_psbt              |-> niso_saved_psbt_i[i],
