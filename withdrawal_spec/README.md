@@ -1,84 +1,193 @@
-# Withdrawal Spec Workspace
-
-<a id="table-of-contents"></a>
+# `BoomerangWithdrawalCore.tla` Guide
 
 ## Table of Contents
 
-- [Contents](#contents)
-- [Markdown Docs](#markdown-docs)
-- [Reading Order](#reading-order)
-- [Verification Workflow](#verification-workflow)
-  - [Core model](#core-model)
-  - [Wire model](#wire-model)
-- [Harness Notes](#harness-notes)
+- [Purpose](#purpose)
+- [What This File Covers](#what-this-file-covers)
+- [Hardening Decisions](#hardening-decisions)
+- [Line-By-Line Guide](#line-by-line-guide)
+- [How To Read It Manually](#how-to-read-it-manually)
+- [Manual Verification](#manual-verification)
+  - [1. Regenerate the translation after editing the PlusCal block](#1-regenerate-the-translation-after-editing-the-pluscal-block)
+  - [2. Run SANY](#2-run-sany)
+  - [3. Run the tiny safety cfg](#3-run-the-tiny-safety-cfg)
+  - [4. Run the tiny sanity cfg](#4-run-the-tiny-sanity-cfg)
+  - [5. Run the deadlock, tiny 5-peer, broader 5-peer, and liveness harnesses](#5-run-the-deadlock-tiny-5-peer-broader-5-peer-and-liveness-harnesses)
+- [Notes](#notes)
 
-This directory contains the current Boomerang withdrawal-model TLA+ work.
-Everything here is still a work in progress: these files are the active
-formalization surface for the withdrawal slice, not a finished proof of the
-full system.
 
-<a id="contents"></a>
-## Contents
+## Purpose
 
 [Back to TOC](#table-of-contents)
 
-| Path | Role |
+
+`withdrawal_spec/BoomerangWithdrawalCore.tla` is the authoritative withdrawal model for the current Boomerang withdrawal proof deliverable.
+
+It keeps the repo scoped to:
+
+- post-setup withdrawal only
+- one active withdrawal session at a time
+- PlusCal-first protocol structure
+- abstract fallback boundary instead of a full fallback spend ceremony
+- abstract signing-ticket binding instead of a full MuSig2 transcript
+
+## What This File Covers
+
+[Back to TOC](#table-of-contents)
+
+
+The model covers:
+
+- milestone-gated initiator start
+- `session_id` and `tx_id` freezing during an active withdrawal
+- explicit non-initiator local PSBT review before the ST-mediated `tx_id` confirmation path begins
+- approval emission only after a matching accepted `tx_id` transcript
+- explicit per-peer verification of the WT-signed initiator commit before any non-initiator emits its own commit
+- initial and recurrent duress resolution only through matching accepted nonce-bound transcripts
+- commit collection with exact placeholder-instance SAR acknowledgements
+- WT-coordinated ping/pong rounds with stronger seq and block-distance checks
+- all-reached transition to signing readiness
+- role-specific approval-window validation for initiator and non-initiator approvals
+- explicit sender-field consistency across accepted approvals, commits, bundles, and pings
+- signing-ticket binding across hydration, signed export, and WT broadcast
+- post-broadcast cleanup and `mystery` regeneration
+- fallback as a separate boundary condition
+
+It intentionally does not fully model:
+
+- setup
+- concurrent withdrawals
+- the full deterministic fallback ceremony
+- the full MuSig2 signing transcript
+- real Bitcoin mempool/mining semantics
+- off-protocol SAR rescue operations
+
+## Hardening Decisions
+
+[Back to TOC](#table-of-contents)
+
+
+The important proof-boundary choices in this file are:
+
+- placeholder instances are opaque identities, not plaintext payload tokens
+- SAR is modeled as single per peer
+- ST/Boomlet freshness is represented by exact transcript binding on `{sid, tx_id, peer, stage, seq, nonce}`
+- recurring duress follows the documented modulo-gated PRNG rule, with an abstract bounded draw domain because the design docs do not canonically define PRNG state
+- the literal country-grid challenge content is still abstracted to symbolic `consent_match`
+- PSBT satisfiability is still abstracted rather than modeled as executable state
+- explicit peer-id set membership remains abstracted by the finite `Peers` set and fixed `INITIATOR`
+- replay suppression is per peer over placeholder-instance memory
+- freshness witnesses are recorded at acceptance time
+- WT↔SAR transport is abstracted semantically here; explicit WT/SAR wire hops live in the wire model
+- signing is bound by a lightweight signing ticket
+- sequential withdrawals are allowed only through explicit reset after successful broadcast
+- fairness-backed liveness is separated from the default safety `Spec`
+
+That signing-ticket boundary is intentional for the current deliverable. It is a documented proof-scope limit, not an accidental omission hidden inside the current model.
+
+## Line-By-Line Guide
+
+[Back to TOC](#table-of-contents)
+
+
+| Section | Purpose |
 | --- | --- |
-| [`withdrawal_spec/BoomerangWithdrawalCore.tla`](BoomerangWithdrawalCore.tla) | Current main withdrawal model. |
-| [`withdrawal_spec/MC_BoomerangWithdrawalCore.cfg`](MC_BoomerangWithdrawalCore.cfg) | Broader three-peer safety/history run with two sequential session ids available. |
-| [`withdrawal_spec/MC_BoomerangWithdrawalCore_safety.cfg`](MC_BoomerangWithdrawalCore_safety.cfg) | Small invariant-focused regression harness. |
-| [`withdrawal_spec/MC_BoomerangWithdrawalCore_sanity.cfg`](MC_BoomerangWithdrawalCore_sanity.cfg) | Small safety plus history-property harness. |
-| [`withdrawal_spec/MC_BoomerangWithdrawalCore_deadlock.cfg`](MC_BoomerangWithdrawalCore_deadlock.cfg) | Tiny deadlock-on classification harness. |
-| [`withdrawal_spec/MC_BoomerangWithdrawalCore_five_peer_safety.cfg`](MC_BoomerangWithdrawalCore_five_peer_safety.cfg) | Tiny 5-peer safety harness. |
-| [`withdrawal_spec/MC_BoomerangWithdrawalCore_five_peer_broad.cfg`](MC_BoomerangWithdrawalCore_five_peer_broad.cfg) | Broader 5-peer safety harness with richer bounds than the tiny smoke check. |
-| [`withdrawal_spec/MC_BoomerangWithdrawalCore_liveness.cfg`](MC_BoomerangWithdrawalCore_liveness.cfg) | Tiny fairness-backed liveness harness. |
-| [`withdrawal_spec/withdrawal_wire/BoomerangWithdrawalWire.tla`](withdrawal_wire/BoomerangWithdrawalWire.tla) | Secondary wire-faithful withdrawal model. |
-| [`withdrawal_spec/withdrawal_wire/MC_BoomerangWithdrawalWire_safety.cfg`](withdrawal_wire/MC_BoomerangWithdrawalWire_safety.cfg) | Curated bounded safety harness for the wire model. |
+| Header and domains | Module header, constants, assumptions, and shared domains. This is where `ChallengeNonces`, `DURESS_CHECK_INTERVAL_IN_BLOCKS`, the nonce-aware peer states, and the symbolic duress stages enter the model. |
+| TLC helpers | Constant-binding helpers used by the curated cfgs, including the bounded recurring-duress draw surface. |
+| Message constructors | Symbolic constructors for approvals, bundles, commits, SAR acknowledgements, pings, pongs, signed PSBTs, broadcasts, and the explicit ST/Boomlet transcript records. |
+| Structural helpers | Matching, freshness, replay, digging-game, and well-formedness helpers, including the role-specific approval-window operators. |
+| PlusCal algorithm | Variables and processes. This is where the peer-local `AwaitingNonInitiatorLocalApproval`, `AwaitingInitialTxIdAck`, `AwaitingInitialDuressAck`, and `AwaitingRecurringDuressAck` substates live, along with post-broadcast reset. |
+| Generated translation | The `\* BEGIN TRANSLATION` to `\* END TRANSLATION` block regenerated by `pcal.trans`. |
+| Safety layer | Post-translation state predicates and safety invariants, including freshness witnesses, sender-field checks, signing-ticket invariants, and deadlock classification support. |
+| Temporal layer | History properties and fairness-backed liveness operators, including `SpecWithFairness`. |
 
-<a id="markdown-docs"></a>
-## Markdown Docs
+## How To Read It Manually
 
 [Back to TOC](#table-of-contents)
 
-| Path | Role |
-| --- | --- |
-| [`withdrawal_spec/core_model_guide.md`](core_model_guide.md) | Guide to the current main withdrawal model. |
-| [`withdrawal_spec/plain_language_walkthrough.md`](plain_language_walkthrough.md) | Plain-language walkthrough of the current core model. |
-| [`withdrawal_spec/withdrawal_wire/README.md`](withdrawal_wire/README.md) | Guide to the wire-faithful model. |
 
-<a id="reading-order"></a>
-## Reading Order
+Use this order:
 
-[Back to TOC](#table-of-contents)
+1. Read the constants, assumptions, and shared domains section for the state vocabulary.
+2. Read the message and helper operators after that opening section.
+3. Read the PlusCal algorithm beginning at `(*--algorithm WithdrawalMerged`.
+4. Treat the `\* BEGIN TRANSLATION` block as generated executable form.
+5. Read the safety properties after the translation block.
+6. Finish with the temporal and liveness operators at the end of the module.
 
-1. [`withdrawal_spec/core_model_guide.md`](core_model_guide.md)
-2. [`withdrawal_spec/plain_language_walkthrough.md`](plain_language_walkthrough.md)
-3. [`withdrawal_spec/BoomerangWithdrawalCore.tla`](BoomerangWithdrawalCore.tla)
-4. [`withdrawal_spec/withdrawal_wire/README.md`](withdrawal_wire/README.md)
-5. [`withdrawal_spec/withdrawal_wire/BoomerangWithdrawalWire.tla`](withdrawal_wire/BoomerangWithdrawalWire.tla)
-
-<a id="verification-workflow"></a>
-## Verification Workflow
+## Manual Verification
 
 [Back to TOC](#table-of-contents)
 
-Run these commands from the repository root.
 
-<a id="core-model"></a>
-### Core model
+Run these from the repository root.
+
+### 1. Regenerate the translation after editing the PlusCal block
 
 [Back to TOC](#table-of-contents)
+
 
 ```bash
 java -cp tools/tla2tools.jar pcal.trans withdrawal_spec/BoomerangWithdrawalCore.tla
-java -cp tools/tla2tools.jar tla2sany.SANY withdrawal_spec/BoomerangWithdrawalCore.tla
+```
 
+What to check:
+
+- only the `\* BEGIN TRANSLATION` to `\* END TRANSLATION` block changes
+- `withdrawal_spec/BoomerangWithdrawalCore.cfg` may be rewritten by the translator; that file is a translator byproduct, not one of the curated `MC_*.cfg` harnesses
+
+### 2. Run SANY
+
+[Back to TOC](#table-of-contents)
+
+
+```bash
+java -cp tools/tla2tools.jar tla2sany.SANY withdrawal_spec/BoomerangWithdrawalCore.tla
+```
+
+What to check:
+
+- parsing succeeds
+- semantic processing succeeds
+- there are no unknown operators or malformed record/domain errors
+
+### 3. Run the tiny safety cfg
+
+[Back to TOC](#table-of-contents)
+
+
+```bash
 META=$(mktemp -d /tmp/bwcore-safety.XXXXXX)
 java -jar tools/tla2tools.jar -workers 1 -config withdrawal_spec/MC_BoomerangWithdrawalCore_safety.cfg -metadir "$META" withdrawal_spec/BoomerangWithdrawalCore.tla
+```
 
+What to check:
+
+- no invariant fails
+- the strengthened placeholder, nonce-transcript, non-initiator local-review, initiator-commit, reached-ping, sender-field, freshness, and signing-ticket properties hold
+- recurring-duress rounds are still explored under the modulo trigger because the curated cfgs bind `DURESS_CHECK_INTERVAL_IN_BLOCKS = 2`
+
+### 4. Run the tiny sanity cfg
+
+[Back to TOC](#table-of-contents)
+
+
+```bash
 META=$(mktemp -d /tmp/bwcore-sanity.XXXXXX)
 java -jar tools/tla2tools.jar -workers 1 -config withdrawal_spec/MC_BoomerangWithdrawalCore_sanity.cfg -metadir "$META" withdrawal_spec/BoomerangWithdrawalCore.tla
+```
 
+What to check:
+
+- the same safety invariants still hold
+- the history-style temporal properties (`UsedSessionsMonotone`, `PlaceholderLedgerMonotone`, `SARReplayMemoryMonotone`, `CompletedWithdrawalsMonotone`) also hold
+
+### 5. Run the deadlock, tiny 5-peer, broader 5-peer, and liveness harnesses
+
+[Back to TOC](#table-of-contents)
+
+
+```bash
 META=$(mktemp -d /tmp/bwcore-deadlock.XXXXXX)
 java -jar tools/tla2tools.jar -workers 1 -config withdrawal_spec/MC_BoomerangWithdrawalCore_deadlock.cfg -metadir "$META" withdrawal_spec/BoomerangWithdrawalCore.tla
 
@@ -90,46 +199,21 @@ java -jar tools/tla2tools.jar -workers 1 -config withdrawal_spec/MC_BoomerangWit
 
 META=$(mktemp -d /tmp/bwcore-liveness.XXXXXX)
 java -jar tools/tla2tools.jar -workers 1 -config withdrawal_spec/MC_BoomerangWithdrawalCore_liveness.cfg -metadir "$META" withdrawal_spec/BoomerangWithdrawalCore.tla
-
-META=$(mktemp -d /tmp/bwcore-main.XXXXXX)
-java -jar tools/tla2tools.jar -workers 1 -config withdrawal_spec/MC_BoomerangWithdrawalCore.cfg -metadir "$META" withdrawal_spec/BoomerangWithdrawalCore.tla
 ```
 
-<a id="wire-model"></a>
-### Wire model
+What to check:
+
+- deadlock traces, if found, can be checked against `DeadlockStatesAreClassified`, but TLC will still halt on the deadlock first when `CHECK_DEADLOCK TRUE`
+- the tiny 5-peer harness still works as a fast smoke check
+- the broader 5-peer harness does not reveal a cardinality-specific safety regression under richer bounds
+- the fairness-backed liveness harness does not falsify the scoped service-progress properties
+
+## Notes
 
 [Back to TOC](#table-of-contents)
 
-```bash
-java -cp tools/tla2tools.jar pcal.trans withdrawal_spec/withdrawal_wire/BoomerangWithdrawalWire.tla
-java -cp tools/tla2tools.jar tla2sany.SANY withdrawal_spec/withdrawal_wire/BoomerangWithdrawalWire.tla
 
-META=$(mktemp -d /tmp/bwwire-safety.XXXXXX)
-java -jar tools/tla2tools.jar -workers 1 -config withdrawal_spec/withdrawal_wire/MC_BoomerangWithdrawalWire_safety.cfg -metadir "$META" withdrawal_spec/withdrawal_wire/BoomerangWithdrawalWire.tla
-```
-
-<a id="harness-notes"></a>
-## Harness Notes
-
-[Back to TOC](#table-of-contents)
-
-- The shipped safety harnesses disable deadlock checking on purpose. The
-  dedicated deadlock harness is for surfacing deadlock traces and classifying
-  them against the repo's explicit deadlock predicate.
-- The curated wire TLC harness binds `DURESS_VALUE_CARDINALITY = 2` for
-  tractability while preserving the design's 5-column control-flow shape.
-- The curated core and wire TLC harnesses bind
-  `DURESS_CHECK_INTERVAL_IN_BLOCKS = 2` so both recurring-duress outcomes remain
-  reachable while still following the documented modulo rule.
-- The sanity harness checks history properties, not liveness. Monotonic ledger
-  growth is not eventual progress.
-- The dedicated liveness harness uses `SpecWithFairness`. Any liveness statement
-  outside that fairness boundary should be treated as non-proven.
-- Sequential withdrawals are modeled by reset-enabled sessions. Concurrent
-  sessions are still out of scope.
-- `pcal.trans` may rewrite [`withdrawal_spec/BoomerangWithdrawalCore.cfg`](BoomerangWithdrawalCore.cfg) and
-  [`withdrawal_spec/withdrawal_wire/BoomerangWithdrawalWire.cfg`](withdrawal_wire/BoomerangWithdrawalWire.cfg); those files are
-  translator byproducts, not curated harnesses.
-- The design corpus is canonical on the modulo trigger for recurring duress
-  checks, but still ambiguous on PRNG seed/state details. The models implement
-  the trigger directly while leaving generator construction abstract.
+- `ObservableEnvelopeConsistentUnderPrivateDuress` is intentionally narrower than a full privacy proof.
+- `Spec` is safety-only. `SpecWithFairness` is the separate fairness-backed liveness surface.
+- The reset logic is for sequential withdrawals only. The model still assumes a single active withdrawal at a time.
+- The design docs are explicit that recurring duress fires when a pseudo-random draw is divisible by `DURESS_CHECK_INTERVAL_IN_BLOCKS`; what remains open is the concrete PRNG source/state, not the modulo guard itself.

@@ -1,6 +1,4 @@
-# Wire Model Guide
-
-<a id="table-of-contents"></a>
+# `BoomerangWithdrawalWire.tla` Guide
 
 ## Table of Contents
 
@@ -15,20 +13,17 @@
 - [Current Invariants](#current-invariants)
 - [Remaining Design Ambiguity](#remaining-design-ambiguity)
 
-<a id="purpose"></a>
+
 ## Purpose
 
 [Back to TOC](#table-of-contents)
 
-[`withdrawal_spec/withdrawal_wire/BoomerangWithdrawalWire.tla`](BoomerangWithdrawalWire.tla) is the
-withdrawal-only wire model derived directly from the canonical withdrawal
-sources in the external `boomerang_design` repository.
+
+`withdrawal_spec/withdrawal_wire/BoomerangWithdrawalWire.tla` is the withdrawal-only wire model derived directly from the canonical withdrawal sources in the external `boomerang_design` repository.
 
 It now also carries a bounded curated TLC surface so the wire-faithful model can be regression-checked in the repository.
 
-The upstream source files below are not part of this repository; they describe
-the external design corpus in the `boomerang_design` repository that this model
-was derived from.
+The upstream source files below are not part of this repository; they describe the external design corpus in `boomerang_design` repository this model was derived from.
 
 Upstream source priority:
 
@@ -38,10 +33,10 @@ Upstream source priority:
 4. `setup/README.md` only for inherited post-setup state
 5. `SPEC.md` only when the withdrawal sources are silent
 
-<a id="shape-of-the-model"></a>
 ## Shape Of The Model
 
 [Back to TOC](#table-of-contents)
+
 
 - post-setup only
 - one active 5-peer withdrawal
@@ -61,10 +56,10 @@ Upstream source priority:
 - recurring duress gated by the documented modulo-trigger rule over an abstract bounded PRNG-draw domain
 - no peer-facing `WTBroadcast`
 
-<a id="actor-ownership"></a>
 ## Actor Ownership
 
 [Back to TOC](#table-of-contents)
+
 
 - `User_i` owns PSBT agreement, ST acknowledgements, duress index choice, and Iso-connect intent.
 - `Niso_i` owns only relay-visible state: saved PSBT/tx id, local event height, reached collection, and hydrated PSBT.
@@ -74,10 +69,10 @@ Upstream source priority:
 - `SAR_i` owns seen placeholder IVs and rescue/doxing artifacts.
 - `WT` owns approval, commit, ping, reply, signed-fragment, and final relay state.
 
-<a id="canonical-step-mapping"></a>
 ## Canonical Step Mapping
 
 [Back to TOC](#table-of-contents)
+
 
 This is a process-level correspondence checklist rather than a line-by-line changelog.
 
@@ -123,10 +118,10 @@ This is a process-level correspondence checklist rather than a line-by-line chan
   - `NisoFlow` forwards `WithdrawalNisoWtMessage5`
   - `Watchtower` aggregates signed fragments and sets the terminal relay artifact `wt_broadcast`
 
-<a id="wire-surface-audit"></a>
 ## Wire Surface Audit
 
 [Back to TOC](#table-of-contents)
+
 
 The model keeps the wire surface constrained to canonical diagram wrapper names:
 
@@ -134,10 +129,10 @@ The model keeps the wire surface constrained to canonical diagram wrapper names:
 - `WireSurfaceOnlyCanonical` checks every hop in `wire_trace`.
 - `NoExtraWTHops` rules out WT-to-User fanout and any synthetic `WTBroadcast`.
 
-<a id="bounded-tlc-surface"></a>
 ## Bounded TLC Surface
 
 [Back to TOC](#table-of-contents)
+
 
 The wire model keeps the design's 5-peer and 5-column shape, but the curated TLC harness binds:
 
@@ -148,10 +143,10 @@ The wire model keeps the design's 5-peer and 5-column shape, but the curated TLC
 
 This keeps the wire surface tractable for TLC without changing the actor topology or wrapper-level control flow.
 
-<a id="structural-checks"></a>
 ## Structural Checks
 
 [Back to TOC](#table-of-contents)
+
 
 The module exposes view operators intended for future hostile-`Niso` work:
 
@@ -167,26 +162,25 @@ The module also now exposes:
 - `RecurringDuressPRNGDraws` / `RecurringDuressCheckFires(...)` so the recurring-check branch follows the design’s modulo rule instead of a free Boolean choice
 - `SARDoxingIdentifiersExcludeSafePadding` to guard the SAR regression surface directly
 
-<a id="verification"></a>
 ## Verification
 
 [Back to TOC](#table-of-contents)
 
-The maintained verification command list lives in [`withdrawal_spec/README.md`](../README.md).
 
-When verifying this specific module, check:
+Run these from the repository root:
 
-- `pcal.trans` regenerates the translation and any translator byproduct changes
-  stay confined to [`withdrawal_spec/withdrawal_wire/BoomerangWithdrawalWire.cfg`](BoomerangWithdrawalWire.cfg)
-- `tla2sany.SANY` completes without malformed wrapper/domain errors
-- [`MC_BoomerangWithdrawalWire_safety.cfg`](MC_BoomerangWithdrawalWire_safety.cfg) preserves the canonical wire surface,
-  committed-tx consistency, hydrated-PSBT consistency, WT relay gating, and SAR
-  safe-padding exclusion properties
+```bash
+java -cp tools/tla2tools.jar pcal.trans withdrawal_spec/withdrawal_wire/BoomerangWithdrawalWire.tla
+java -cp tools/tla2tools.jar tla2sany.SANY withdrawal_spec/withdrawal_wire/BoomerangWithdrawalWire.tla
 
-<a id="current-invariants"></a>
+META=$(mktemp -d /tmp/bwwire-safety.XXXXXX)
+java -jar tools/tla2tools.jar -workers 1 -config withdrawal_spec/withdrawal_wire/MC_BoomerangWithdrawalWire_safety.cfg -metadir "$META" withdrawal_spec/withdrawal_wire/BoomerangWithdrawalWire.tla
+```
+
 ## Current Invariants
 
 [Back to TOC](#table-of-contents)
+
 
 - `WireSurfaceOnlyCanonical`
 - `NoExtraWTHops`
@@ -195,9 +189,9 @@ When verifying this specific module, check:
 - `WTRelayRequiresAllSigned`
 - `SARDoxingIdentifiersExcludeSafePadding`
 
-<a id="remaining-design-ambiguity"></a>
 ## Remaining Design Ambiguity
 
 [Back to TOC](#table-of-contents)
+
 
 The design corpus is clear that repeated duress checks are triggered by a pseudo-random draw whose modulo against `DURESS_CHECK_INTERVAL_IN_BLOCKS` is zero. What it still does not define canonically is the PRNG source, seed/state persistence, or whether each peer must maintain an independently auditable PRNG stream. The wire model now implements the modulo rule directly and leaves that narrower generator question as an explicit proof-boundary assumption.

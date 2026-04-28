@@ -1,11 +1,18 @@
-<a id="table-of-contents"></a>
-
 ## Table of Contents
 
 - [1. Protocol intent and scope](#1-protocol-intent-and-scope)
 - [2. Source authority and conflict policy](#2-source-authority-and-conflict-policy)
 - [3. Modeling conventions](#3-modeling-conventions)
 - [4. Actor catalog](#4-actor-catalog)
+  - [`User(i)`](#useri)
+  - [`Phone(i)`](#phonei)
+  - [`Iso(i)`](#isoi)
+  - [`Niso(i)`](#nisoi)
+  - [`Boomlet(i)`](#boomleti)
+  - [`Boomletwo(i)`](#boomletwoi)
+  - [`ST(i)`](#sti)
+  - [`WT`](#wt)
+  - [`SAR`](#sar)
 - [5. System boundaries and trust assumptions](#5-system-boundaries-and-trust-assumptions)
   - [In-model](#in-model)
   - [Out-of-model](#out-of-model)
@@ -49,14 +56,98 @@
   - [9.3 Composite withdrawal states](#93-composite-withdrawal-states)
 - [10. Actor-local machines](#10-actor-local-machines)
   - [10.1 `User(i)` machine](#101-useri-machine)
+    - [`User(i).Setup.AwaitingSARInvoice` `\[DERIVED\]`](#userisetupawaitingsarinvoice-derived)
+    - [`User(i).Setup.AwaitingPhoneSARSync` `\[DERIVED\]`](#userisetupawaitingphonesarsync-derived)
+    - [`User(i).Setup.AwaitingMnemonic`](#userisetupawaitingmnemonic)
+    - [`User(i).Setup.ExchangingPeerIdentityOutOfBand`](#userisetupexchangingpeeridentityoutofband)
+    - [`User(i).Setup.AwaitingParamApprovalOnST`](#userisetupawaitingparamapprovalonst)
+    - [`User(i).Setup.AwaitingWTFeePayment` `\[DERIVED\]`](#userisetupawaitingwtfeepayment-derived)
+    - [`User(i).Setup.AwaitingBackupProcedure`](#userisetupawaitingbackupprocedure)
+    - [`User(i).ActiveReady`](#useriactiveready)
+    - [`User(i).Withdrawal.Initiator.ReviewingLocalTxId`](#useriwithdrawalinitiatorreviewinglocaltxid)
+    - [`User(i).Withdrawal.NonInitiator.ReviewingPSBT`](#useriwithdrawalnoninitiatorreviewingpsbt)
+    - [`User(i).Withdrawal.RespondingToDuressCheck`](#useriwithdrawalrespondingtoduresscheck)
+    - [`User(i).Withdrawal.ReadyToSignViaIso`](#useriwithdrawalreadytosignviaiso)
+    - [`User(i).Withdrawal.AwaitingBroadcast`](#useriwithdrawalawaitingbroadcast)
   - [10.2 `Phone(i)` machine](#102-phonei-machine)
+    - [`Phone(i).Setup.AwaitingRegistrationInput`](#phoneisetupawaitingregistrationinput)
+    - [`Phone(i).Setup.AwaitingPaymentInfo`](#phoneisetupawaitingpaymentinfo)
+    - [`Phone(i).Setup.AwaitingUserReceipt`](#phoneisetupawaitinguserreceipt)
+    - [`Phone(i).Setup.AwaitingSARSyncAck`](#phoneisetupawaitingsarsyncack)
+    - [`Phone(i).Setup.SyncedWithSAR`](#phoneisetupsyncedwithsar)
   - [10.3 `Iso(i)` machine](#103-isoi-machine)
+    - [`Iso(i).Off`](#isoioff)
+    - [`Iso(i).Setup.Running`](#isoisetuprunning)
+    - [`Iso(i).Setup.BackupMode`](#isoisetupbackupmode)
+    - [`Iso(i).Withdrawal.SigningReady`](#isoiwithdrawalsigningready)
+    - [`Iso(i).Withdrawal.CoordinatingMuSig2`](#isoiwithdrawalcoordinatingmusig2)
   - [10.4 `ST(i)` machine](#104-sti-machine)
+    - [`ST(i).Unpaired`](#stiunpaired)
+    - [`ST(i).Paired.Idle`](#stipairedidle)
+    - [`ST(i).Setup.AwaitingConsentSelection`](#stisetupawaitingconsentselection)
+    - [`ST(i).Setup.AwaitingConsentConfirmation`](#stisetupawaitingconsentconfirmation)
+    - [`ST(i).Setup.AwaitingParamConfirmation`](#stisetupawaitingparamconfirmation)
+    - [`ST(i).Withdrawal.AwaitingTxIdAcknowledgement`](#stiwithdrawalawaitingtxidacknowledgement)
+    - [`ST(i).Withdrawal.AwaitingDuressSelection`](#stiwithdrawalawaitingduressselection)
   - [10.5 `Boomlet(i)` machine](#105-boomleti-machine)
+    - [`Boomlet(i).Uninstalled`](#boomletiuninstalled)
+    - [`Boomlet(i).Setup.AwaitingSTPairing`](#boomletisetupawaitingstpairing)
+    - [`Boomlet(i).Setup.AwaitingInitialConsentResponse`](#boomletisetupawaitinginitialconsentresponse)
+    - [`Boomlet(i).Setup.AwaitingConsentConfirmationResponse`](#boomletisetupawaitingconsentconfirmationresponse)
+    - [`Boomlet(i).Setup.OfflineReadyAwaitingNiso`](#boomletisetupofflinereadyawaitingniso)
+    - [`Boomlet(i).Setup.AwaitingParamSeedApproval`](#boomletisetupawaitingparamseedapproval)
+    - [`Boomlet(i).Setup.AwaitingPeerParamConsensus`](#boomletisetupawaitingpeerparamconsensus)
+    - [`Boomlet(i).Setup.AwaitingWTRegistrationAck`](#boomletisetupawaitingwtregistrationack)
+    - [`Boomlet(i).Setup.AwaitingSARActivationAck`](#boomletisetupawaitingsaractivationack)
+    - [`Boomlet(i).Setup.AwaitingBackupCompletion`](#boomletisetupawaitingbackupcompletion)
+    - [`Boomlet(i).Setup.AwaitingFinalBackupSync`](#boomletisetupawaitingfinalbackupsync)
+    - [`Boomlet(i).ActiveReady`](#boomletiactiveready)
+    - [`Boomlet(i).Withdrawal.Initiator.AwaitingPSBT`](#boomletiwithdrawalinitiatorawaitingpsbt)
+    - [`Boomlet(i).Withdrawal.NonInitiator.AwaitingWTApprovalBundle`](#boomletiwithdrawalnoninitiatorawaitingwtapprovalbundle)
+    - [`Boomlet(i).Withdrawal.AwaitingAllApprovals`](#boomletiwithdrawalawaitingallapprovals)
+    - [`Boomlet(i).Withdrawal.AwaitingInitialDuressResponse`](#boomletiwithdrawalawaitinginitialduressresponse)
+    - [`Boomlet(i).Withdrawal.NonInitiator.AwaitingWTInitiatorCommit`](#boomletiwithdrawalnoninitiatorawaitingwtinitiatorcommit)
+    - [`Boomlet(i).Withdrawal.AwaitingCommitCollection`](#boomletiwithdrawalawaitingcommitcollection)
+    - [`Boomlet(i).Withdrawal.DiggingGame`](#boomletiwithdrawaldigginggame)
+    - [`Boomlet(i).Withdrawal.ReadyToSign`](#boomletiwithdrawalreadytosign)
+    - [`Boomlet(i).Withdrawal.SigningWithIso`](#boomletiwithdrawalsigningwithiso)
+    - [`Boomlet(i).Withdrawal.PostReset` `\[DERIVED\]`](#boomletiwithdrawalpostreset-derived)
   - [10.6 `Boomletwo(i)` machine](#106-boomletwoi-machine)
+    - [`Boomletwo(i).Uninstalled`](#boomletwoiuninstalled)
+    - [`Boomletwo(i).InstalledUnseeded`](#boomletwoiinstalledunseeded)
+    - [`Boomletwo(i).BackupImportedInactive`](#boomletwoibackupimportedinactive)
   - [10.7 `Niso(i)` machine](#107-nisoi-machine)
+    - [`Niso(i).Uninitialized`](#nisoiuninitialized)
+    - [`Niso(i).Setup.AwaitingTorIdentity`](#nisoisetupawaitingtoridentity)
+    - [`Niso(i).Setup.AwaitingPeerParametersFromUser`](#nisoisetupawaitingpeerparametersfromuser)
+    - [`Niso(i).Setup.AwaitingWTRegistrationInvoiceSettlement`](#nisoisetupawaitingwtregistrationinvoicesettlement)
+    - [`Niso(i).Setup.AwaitingSARActivationAck`](#nisoisetupawaitingsaractivationack)
+    - [`Niso(i).Setup.AwaitingBackupCompletion`](#nisoisetupawaitingbackupcompletion)
+    - [`Niso(i).ActiveReady`](#nisoiactiveready)
+    - [`Niso(i).Withdrawal.Initiator.AwaitingPSBT`](#nisoiwithdrawalinitiatorawaitingpsbt)
+    - [`Niso(i).Withdrawal.NonInitiator.AwaitingWTInitiationBundle`](#nisoiwithdrawalnoninitiatorawaitingwtinitiationbundle)
+    - [`Niso(i).Withdrawal.AwaitingCommitCollection`](#nisoiwithdrawalawaitingcommitcollection)
+    - [`Niso(i).Withdrawal.DiggingGameRelay`](#nisoiwithdrawaldigginggamerelay)
+    - [`Niso(i).Withdrawal.ReadyToSign`](#nisoiwithdrawalreadytosign)
   - [10.8 `WT` machine](#108-wt-machine)
+    - [`WT.Setup.CollectingPeerRegistrations`](#wtsetupcollectingpeerregistrations)
+    - [`WT.Setup.AwaitingWTFeeReceipts`](#wtsetupawaitingwtfeereceipts)
+    - [`WT.Setup.RegisteredActive`](#wtsetupregisteredactive)
+    - [`WT.Setup.AwaitingSARActivationData`](#wtsetupawaitingsaractivationdata)
+    - [`WT.Withdrawal.AwaitingInitiatorApproval`](#wtwithdrawalawaitinginitiatorapproval)
+    - [`WT.Withdrawal.CollectingPeerApprovals`](#wtwithdrawalcollectingpeerapprovals)
+    - [`WT.Withdrawal.CollectingCommitments`](#wtwithdrawalcollectingcommitments)
+    - [`WT.Withdrawal.DiggingGame.CollectingPings`](#wtwithdrawaldigginggamecollectingpings)
+    - [`WT.Withdrawal.DiggingGame.DistributingPongs`](#wtwithdrawaldigginggamedistributingpongs)
+    - [`WT.Withdrawal.DistributingReachedPings`](#wtwithdrawaldistributingreachedpings)
+    - [`WT.Withdrawal.CollectingSignedPSBTs`](#wtwithdrawalcollectingsignedpsbts)
+    - [`WT.Withdrawal.Broadcasting`](#wtwithdrawalbroadcasting)
   - [10.9 `SAR` machine](#109-sar-machine)
+    - [`SAR.AwaitingIdentifierOnlyRegistration`](#sarawaitingidentifieronlyregistration)
+    - [`SAR.AwaitingPaymentAndEncryptedDoxingData`](#sarawaitingpaymentandencrypteddoxingdata)
+    - [`SAR.SyncedWithPhoneUnfinalized`](#sarsyncedwithphoneunfinalized)
+    - [`SAR.FinalizedActive`](#sarfinalizedactive)
+    - [`SAR.SearchAndRescueTriggered`](#sarsearchandrescuetriggered)
 - [11. Transition catalog](#11-transition-catalog)
   - [11.1 Setup transitions](#111-setup-transitions)
   - [11.2 Withdrawal transitions](#112-withdrawal-transitions)
@@ -91,17 +182,16 @@
   - [18.3 Top 10 unresolved issues most likely to change the formal model](#183-top-10-unresolved-issues-most-likely-to-change-the-formal-model)
   - [18.4 Recommended first TLA+ slice](#184-recommended-first-tla-slice)
 
-<a id="1-protocol-intent-and-scope"></a>
 ## 1. Protocol intent and scope
 
 [Back to TOC](#table-of-contents)
 
-Boomerang is a five-peer Bitcoin cold-storage protocol that tries to preserve spendability while making coercive withdrawal materially harder, slower, and less predictable. The protocol does this by separating spending into two descriptor regimes: a probabilistic boomerang regime, whose keys include unrecoverable Boomlet-held shares and whose withdrawal path is operationalized by the specified setup and withdrawal ceremonies; and a normal deterministic regime, whose timelocked waterfall scripts are present in the descriptor as a fallback but are not operationalized here as a ceremony. The specified setup flow establishes the long-lived state that the withdrawal flow later inherits: peer identities, Tor addressing, boomerang parameters, watchtower registration, SAR linkage, the per-user duress consent set, and backup state. The specified withdrawal flow operationalizes only spending in the boomerang regime, and only after `milestone_block_0` has been reached. Within that flow, the initiating peer starts a PSBT-based ceremony, all peers approve and commit to a single `tx_id`, and the Watchtower coordinates a non-deterministic digging game whose duration is controlled by secret per-Boomlet `mystery` thresholds. Duress signaling is mandatory at commitment time and may recur during the digging game at Boomlet-chosen random intervals; the design intent is that duress and non-duress executions do not diverge in observable protocol flow. The Watchtower is not a custodian; it is the liveness coordinator, block-height anchor, approval/commit/ping aggregator, and final relay point for signed PSBTs. SAR is not a signer; it is the recipient and interpreter of encrypted duress-bearing placeholders and the trigger for off-protocol search-and-rescue action when a valid duress signal is detected. The current deliverable therefore specifies one distributed state machine that covers setup, active-ready state, boomerang-regime withdrawal, signing handoff, broadcast, and immediate cleanup/reset, while explicitly marking ancillary procedures, deterministic fallback operation, and several failure recoveries as recognized but out of scope.
 
-<a id="2-source-authority-and-conflict-policy"></a>
+Boomerang is a five-peer Bitcoin cold-storage protocol that tries to preserve spendability while making coercive withdrawal materially harder, slower, and less predictable. The protocol does this by separating spending into two descriptor regimes: a probabilistic boomerang regime, whose keys include unrecoverable Boomlet-held shares and whose withdrawal path is operationalized by the specified setup and withdrawal ceremonies; and a normal deterministic regime, whose timelocked waterfall scripts are present in the descriptor as a fallback but are not operationalized here as a ceremony. The specified setup flow establishes the long-lived state that the withdrawal flow later inherits: peer identities, Tor addressing, boomerang parameters, watchtower registration, SAR linkage, the per-user duress consent set, and backup state. The specified withdrawal flow operationalizes only spending in the boomerang regime, and only after `milestone_block_0` has been reached. Within that flow, the initiating peer starts a PSBT-based ceremony, all peers approve and commit to a single `tx_id`, and the Watchtower coordinates a non-deterministic digging game whose duration is controlled by secret per-Boomlet `mystery` thresholds. Duress signaling is mandatory at commitment time and may recur during the digging game at Boomlet-chosen random intervals; the design intent is that duress and non-duress executions do not diverge in observable protocol flow. The Watchtower is not a custodian; it is the liveness coordinator, block-height anchor, approval/commit/ping aggregator, and final relay point for signed PSBTs. SAR is not a signer; it is the recipient and interpreter of encrypted duress-bearing placeholders and the trigger for off-protocol search-and-rescue action when a valid duress signal is detected. The current deliverable therefore specifies one distributed state machine that covers setup, active-ready state, boomerang-regime withdrawal, signing handoff, broadcast, and immediate cleanup/reset, while explicitly marking ancillary procedures, deterministic fallback operation, and several failure recoveries as recognized but out of scope.
 ## 2. Source authority and conflict policy
 
 [Back to TOC](#table-of-contents)
+
 
 This specification is synthesized only from the following design files and nothing else:
 
@@ -117,11 +207,10 @@ Authority is resolved in the order required by the request:
 3. `DEEPDIVE.md` is authoritative for entities, descriptor and regime structure, design goals, trust model, system intent, and identified failure modes.
 
 When one source is broader and another is more procedural, this document follows the procedural source for operative behavior and uses the broader source only for interpretation and intent. When a lower-authority source adds detail that does not conflict with a higher-authority source, that detail is included. When sources conflict, omit a required guard, use inconsistent data structures, or leave recovery behavior unspecified, this document does not silently repair the design. Instead it records the issue in Section 16, states the most conservative interpretation used here, and confines the state machine to behavior that is explicitly supported.
-
-<a id="3-modeling-conventions"></a>
 ## 3. Modeling conventions
 
 [Back to TOC](#table-of-contents)
+
 
 This is a distributed state-machine specification. Each actor owns local state, reacts to explicit events, validates incoming messages, emits outgoing messages, and updates persistent or volatile variables.
 
@@ -144,59 +233,84 @@ Block height is represented as an explicit observed quantity, never as an implic
 Signatures are modeled abstractly. A payload may be described as “signed by actor key K”; a receiver may perform `verify signature` as a guard. Encryption and decryption are likewise abstract. The model uses operations such as `encrypt for ST`, `encrypt for WT`, `encrypt for SAR`, `decrypt`, and `compare decrypted content to expected content`, without committing to a lower-level cryptographic implementation beyond what the sources state. A nonce is modeled as a fresh challenge value bound to exactly one challenge-response pair. A nonce equality check is a freshness guard against replay or substitution.
 
 An encrypted payload remains opaque to actors not authorized to decrypt it. The model therefore never assumes that WT learns the plaintext of a duress-bearing placeholder, that Niso learns the content of a Boomlet–ST challenge, or that peers learn each other’s secrets by relay. The only semantic operations on encrypted payloads are generation, forwarding, decryption by the intended recipient, signature verification on nested content, and equality comparison to previously sent content where the sources require that.
-
-<a id="4-actor-catalog"></a>
 ## 4. Actor catalog
 
 [Back to TOC](#table-of-contents)
 
+
 The protocol uses a parameterized peer family `Peer(i)` where `i in {0..4}`. Each peer contains `User(i)`, `Phone(i)`, `Iso(i)`, `Niso(i)`, `Boomlet(i)`, `Boomletwo(i)`, and `ST(i)`. `WT` and `SAR` are external shared services.
 
-#### `User(i)`
+### `User(i)`
+
+[Back to TOC](#table-of-contents)
+
 
 Role: the human peer whose long-term normal key material is created and later reconstructed through mnemonic and passphrase, who approves setup data, who authorizes a specific withdrawal transaction, and who performs duress selections through ST. Trust assumptions: the user is honest when free, can verify displayed data, and can physically connect devices as required; under coercion the user may be observed and may be forced to continue, which is precisely why the duress mechanism exists. Main responsibilities: provide setup inputs, pay SAR and WT invoices, perform out-of-band peer exchange, approve boomerang parameters, approve PSBTs, confirm locally displayed `tx_id`, answer duress checks, and move Boomlet between Iso and Niso. User-owned states are high-level approval and reconnection states, not cryptographic storage states.
 
-#### `Phone(i)`
+### `Phone(i)`
+
+[Back to TOC](#table-of-contents)
+
 
 Role: the user’s online channel to SAR during registration and later provider of dynamic doxing data. Trust assumptions: enough phone integrity exists to keep sending encrypted dynamic data, but the design explicitly recognizes phone compromise or data-feed loss as a concern rather than a solved property. Main responsibilities: derive `doxing_key` and `doxing_data_identifier` from user input, initiate SAR registration, forward payment information, send encrypted static and dynamic doxing data, and maintain synchronization with SAR. Phone-owned states are the SAR registration and in-sync states.
 
-#### `Iso(i)`
+### `Iso(i)`
+
+[Back to TOC](#table-of-contents)
+
 
 Role: trusted isolated software used for offline key generation, ST pairing relay, setup verification, backup verification and transfer, and later MuSig2 signing with Boomlet. Trust assumptions: the isolated environment and the Iso software are trusted while active; the sources explicitly state that Iso loses state on shutdown. Main responsibilities: create mnemonic and `normal_pubkey_i`, install Boomlet and Boomletwo applets, relay ST pairing material, relay duress-setup traffic, verify descriptor and SAR fingerprint data during backup, reconstruct normal signing material from mnemonic and passphrase, and participate in the signing handoff. Iso-owned states are session-local and predominantly volatile.
 
-#### `Niso(i)`
+### `Niso(i)`
+
+[Back to TOC](#table-of-contents)
+
 
 Role: the online, stateful coordination component for peer `i`, with access to a Bitcoin node and TOR network. Trust assumptions: Niso may be online and therefore not physically isolated, but it is expected to perform mirrored validations, maintain current block-height views, and communicate through TOR. Main responsibilities: connect to peers and WT, relay messages between local actors and remote actors, verify signatures and freshness in parallel with Boomlet, derive or hydrate PSBTs where the sources require, present data to User or ST, and export signed PSBTs to WT. Niso-owned states span online setup, withdrawal relay, and final export.
 
-#### `Boomlet(i)`
+### `Boomlet(i)`
+
+[Back to TOC](#table-of-contents)
+
 
 Role: the secure hardware element that generates the unrecoverable boom share, stores the duress consent set, enforces the non-deterministic withdrawal ceremony, creates duress-bearing placeholders, and holds the secret `mystery` threshold. Trust assumptions: Boomlet’s Java Card security promises hold; cryptography and RNGs behave correctly; side-channel resistance is sufficient; the attacker cannot break the secure element. Main responsibilities: generate identity and boom-share keys, construct `peer_i_id`, pair with ST, store `duress_consent_set`, verify setup inputs, fix `boomerang_params`, generate `mystery`, register with WT, finalize SAR activation, export backup material excluding the current mystery, own the commitment and digging-game logic, enforce repeated duress checks, retain the committed `tx_id`, and clear withdrawal state after signed PSBT export while regenerating `mystery`. Boomlet owns most of the protocol’s load-bearing persistent states.
 
-#### `Boomletwo(i)`
+### `Boomletwo(i)`
+
+[Back to TOC](#table-of-contents)
+
 
 Role: backup Java Card applet for Boomlet. Trust assumptions: only one of Boomlet and Boomletwo should be active at a time, but the activation/deactivation procedure is explicitly not yet designed; this is therefore a recognized but out-of-scope operational requirement. Main responsibilities: receive imported backup data, generate its own `mystery`, acknowledge successful import, and remain inactive unless activated by an ancillary procedure. Boomletwo-owned states are installation and inactive imported-backup states.
 
-#### `ST(i)`
+### `ST(i)`
+
+[Back to TOC](#table-of-contents)
+
 
 Role: the secure terminal through which the user interacts with Boomlet for sensitive checks and duress selections. Trust assumptions: ST is tamper evident, its display is small enough to shield, and the attacker cannot simultaneously observe both the display and the user’s hand movements in a way that defeats the duress mechanism. Main responsibilities: pair cryptographically with Boomlet, display duress setup and duress check spaces, capture consent-set selections and confirmation selections, display boomerang parameter seeds, display `tx_id`, sign user acknowledgments for Boomlet, and preserve nonce-coupled freshness. ST owns pairing state and prompt-response control state.
 
-#### `WT`
+### `WT`
+
+[Back to TOC](#table-of-contents)
+
 
 Role: the Watchtower, an online liveness coordinator and block-height anchor, not a signer or custodian of funds. Trust assumptions: WT is operationally trusted for coordination and freshness anchoring; availability is required for progress; metadata exposure to WT is recognized as a trust and privacy concern. Main responsibilities: register peers, verify registration and payment, acknowledge setup completion milestones, relay SAR-finalization traffic, collect transaction approvals and commitments, store the ceremony `tx_id`, coordinate the ping-pong loop using current block height, distribute pongs and the final reached-pings collection, collect signed PSBTs, aggregate them, and relay the final signed transaction to the network. WT owns the global coordination states and collections.
 
-#### `SAR`
+### `SAR`
+
+[Back to TOC](#table-of-contents)
+
 
 Role: Search And Rescue service that stores encrypted doxing data and interprets duress-bearing placeholders. Trust assumptions: SAR effectiveness is jurisdiction-dependent; SAR is trusted to act when valid duress is detected, but rogue or weak SAR behavior remains a recognized concern. Main responsibilities: register the user through Phone, store encrypted static and dynamic doxing data keyed by `doxing_data_identifier`, confirm finalization through WT during setup, decrypt duress placeholders during withdrawal, distinguish zero-padding from duress, suppress replay by tracking `(boomlet_identity_pubkey, iv)` pairs, and trigger off-protocol rescue operations when a valid match is found. SAR owns the customer registry and duress-processing states.
-
-<a id="5-system-boundaries-and-trust-assumptions"></a>
 ## 5. System boundaries and trust assumptions
 
 [Back to TOC](#table-of-contents)
 
-<a id="in-model"></a>
+
 ### In-model
 
 [Back to TOC](#table-of-contents)
+
 
 The following are part of the state machine:
 
@@ -205,11 +319,10 @@ The following are part of the state machine:
 - Explicit block-height observations and message freshness checks.
 - Abstract cryptographic guards and actions such as hashing, encrypting, decrypting, signature generation, signature verification, and equality comparison of derived values.
 - Descriptor construction, agreement, fingerprints, SAR finalization responses, backup transfer, PSBT approval, commitment, ping-pong state updates, signing handoff, signed PSBT export, and WT aggregation/broadcast.
-
-<a id="out-of-model"></a>
 ### Out-of-model
 
 [Back to TOC](#table-of-contents)
+
 
 The following are acknowledged but not fully specified here:
 
@@ -219,11 +332,10 @@ The following are acknowledged but not fully specified here:
 - The deterministic normal-regime spending ceremony. The descriptor contains that regime, but this deliverable does not specify an operational state machine for it.
 - Ancillary procedures explicitly listed in `DEEPDIVE.md`: switching WT, activating Boomletwo, changing Phone, changing Niso, changing ST, modifying SAR membership, timeout handling, and prolonged peer-response handling.
 - Multiple-WT voting, setup uniqueness improvements, extensive threat-model completion, and error-handling mechanisms that the roadmap says are still to be designed.
-
-<a id="explicit-trust-and-dependency-assumptions"></a>
 ### Explicit trust and dependency assumptions
 
 [Back to TOC](#table-of-contents)
+
 
 **Hardware trust**: Boomlet and Boomletwo must preserve secret key shares and `mystery`; ST must be tamper evident; the isolated hardware running Iso must be trusted while active. If those assumptions fail, the probabilistic and duress guarantees may collapse.
 
@@ -238,18 +350,16 @@ The following are acknowledged but not fully specified here:
 **Block-height freshness**: Correctness of approval, commitment, ping, and pong transitions depends on block-height observations being recent enough to satisfy the named tolerances and required minimum distances.
 
 **Non-compromised cryptography**: Signature security, encryption confidentiality, hashing, DH key agreement, and RNG unpredictability are treated as unbroken. The design explicitly assumes the attacker cannot break cryptography.
-
-<a id="6-state-variable-catalog"></a>
 ## 6. State variable catalog
 
 [Back to TOC](#table-of-contents)
 
-Unless otherwise stated, `i` ranges over `{0..4}` and family variables are defined uniformly for each peer. Variables marked `[DERIVED]` are introduced here to make implicit source structure explicit.
 
-<a id="61-shared-and-per-peer-setup-variables"></a>
+Unless otherwise stated, `i` ranges over `{0..4}` and family variables are defined uniformly for each peer. Variables marked `[DERIVED]` are introduced here to make implicit source structure explicit.
 ### 6.1 Shared and per-peer setup variables
 
 [Back to TOC](#table-of-contents)
+
 
 **`boomerang_descriptor`**  
 Meaning: the Taproot descriptor containing the boomerang regime and the normal deterministic waterfall regime.  
@@ -449,11 +559,10 @@ Provenance: explicit.
 Initial value: unset until setup mystery generation.  
 Updated: generated after `boomerang_params` fixation; independently generated again by Boomletwo on backup import; regenerated by Boomlet after signed-PSBT export.  
 Cleared: replaced, not simply cleared.
-
-<a id="62-setup-synchronization-and-backup-variables"></a>
 ### 6.2 Setup synchronization and backup variables
 
 [Back to TOC](#table-of-contents)
+
 
 **`shared_state_active_wt_fingerprint`**  
 Meaning: hash representing that local WT registration is active.  
@@ -500,11 +609,10 @@ Provenance: explicit.
 Initial value: unset.  
 Updated: on Boomletwo import completion.  
 Cleared: after Boomlet verifies it or at end of setup session.
-
-<a id="63-withdrawal-variables"></a>
 ### 6.3 Withdrawal variables
 
 [Back to TOC](#table-of-contents)
+
 
 **`psbt_i`**  
 Meaning: the withdrawal PSBT currently bound to the ceremony. For initiator it is user-supplied; for non-initiators it is decrypted from the initiator’s encrypted copy.  
@@ -716,11 +824,10 @@ Provenance: explicit.
 Initial value: empty at or before WT loop entry.  
 Updated: when WT accepts a ping with `reached_mystery_flag = 1` from a peer not previously recorded.  
 Cleared: after handoff completion or on reset.
-
-<a id="64-wt-and-sar-registry-variables"></a>
 ### 6.4 WT and SAR registry variables
 
 [Back to TOC](#table-of-contents)
+
 
 **`wt_registered_peer_state` `[DERIVED]`**  
 Meaning: WT registry of peer identity pubkeys, signed Tor addresses, and boomerang-parameter fingerprints.  
@@ -748,18 +855,16 @@ Provenance: derived from explicit replay-suppression language in `withdrawal.md`
 Initial value: empty.  
 Updated: on each positive, new placeholder processed by SAR.  
 Cleared: not specified.
-
-<a id="7-message-catalog"></a>
 ## 7. Message catalog
 
 [Back to TOC](#table-of-contents)
 
-The message catalog is grouped by message family. Fields listed below are normative: sender, receiver, payload, purpose, receiver-side validations, receiver state effect, and source anchors. Message names are descriptive family names, not implementation identifiers.
 
-<a id="71-setup-sar-sign-up-and-phone-sync"></a>
+The message catalog is grouped by message family. Fields listed below are normative: sender, receiver, payload, purpose, receiver-side validations, receiver state effect, and source anchors. Message names are descriptive family names, not implementation identifiers.
 ### 7.1 Setup: SAR sign-up and Phone sync
 
 [Back to TOC](#table-of-contents)
+
 
 **Family `Setup.SARRegistration.Init`**  
 Sender: `Phone(i)`  
@@ -796,11 +901,10 @@ Purpose: signal completion of the phone/SAR registration portion of setup.
 Receiver validations: magic value equality.  
 State effect on receiver: Phone enters synced state; User is allowed to proceed to Boomlet installation.  
 Source anchors: `setup.md` 6–8; `setup.puml` 6–8.
-
-<a id="72-setup-boomlet-installation-and-boomletst-pairing"></a>
 ### 7.2 Setup: Boomlet installation and Boomlet–ST pairing
 
 [Back to TOC](#table-of-contents)
+
 
 **Family `Setup.BoomletInstall`**  
 Sender: `Iso(i)`  
@@ -828,11 +932,10 @@ Purpose: complete pairing so Boomlet can compute the same shared secret.
 Receiver validations: none beyond well-formedness are specified.  
 State effect on receiver: shared Boomlet–ST secret becomes available for all later ST-mediated checks.  
 Source anchors: `setup.md` 12–14; `setup.puml` 12–14; `duress_setup.puml` messages 2–4.
-
-<a id="73-setup-duress-consent-set-establishment"></a>
 ### 7.3 Setup: duress consent-set establishment
 
 [Back to TOC](#table-of-contents)
+
 
 **Family `Setup.Duress.InitialChallenge`**  
 Sender: `Boomlet(i)` via `Iso(i)`  
@@ -870,11 +973,10 @@ Receiver validations: nonce equality and resulting selected-number set equality 
 State effect on receiver: duress setup completes.  
 Source anchors: `setup.md` 24–27; `setup.puml` 24–27; `duress_setup.puml` messages 15–17.  
 Conflict note: retry semantics if confirmation fails are more specific in `duress_setup.puml` than in `setup.md`; see Section 16.
-
-<a id="74-setup-tor-identity-and-peer-parameter-verification"></a>
 ### 7.4 Setup: Tor identity and peer parameter verification
 
 [Back to TOC](#table-of-contents)
+
 
 **Family `Setup.TorIdentity`**  
 Sender: `Boomlet(i)`  
@@ -911,11 +1013,10 @@ Purpose: force exact equality of parameters across peers before setup proceeds.
 Receiver validations: verify every peer signature and content equality.  
 State effect on receiver: local `boomerang_params` becomes fixed.  
 Source anchors: `setup.md` 42–45; `setup.puml` 42–45.
-
-<a id="75-setup-wt-registration-and-wt-activation-sync"></a>
 ### 7.5 Setup: WT registration and WT activation sync
 
 [Back to TOC](#table-of-contents)
+
 
 **Family `Setup.WTRegistration.Request`**  
 Sender: `Boomlet(i)` via `Niso(i)`  
@@ -952,11 +1053,10 @@ Purpose: prove that all peers reached the same WT-active state.
 Receiver validations: signature validity and content equality across all peers.  
 State effect on receiver: local peer may proceed to SAR finalization.  
 Source anchors: `setup.md` 55–59; `setup.puml` 55–59.
-
-<a id="76-setup-sar-activation-through-wt"></a>
 ### 7.6 Setup: SAR activation through WT
 
 [Back to TOC](#table-of-contents)
+
 
 **Family `Setup.SARFinalization.Init`**  
 Sender: `Boomlet(i)` via `Niso(i)` and `WT`  
@@ -984,11 +1084,10 @@ Purpose: prove that all peers have active SAR protection.
 Receiver validations: signature validity and content equality across all peers.  
 State effect on receiver: local peer may proceed to backup creation.  
 Source anchors: `setup.md` 66–70; `setup.puml` 66–70.
-
-<a id="77-setup-boomlet-backup-and-final-synchronization"></a>
 ### 7.7 Setup: Boomlet backup and final synchronization
 
 [Back to TOC](#table-of-contents)
+
 
 **Family `Setup.Backup.Request`**  
 Sender: `Iso(i)`  
@@ -1034,11 +1133,10 @@ Purpose: prove that all peers completed backup creation before final setup compl
 Receiver validations: signature validity and content equality across all peers.  
 State effect on receiver: local setup enters complete state and emits `"setup_done"`.  
 Source anchors: `setup.md` 88–94; `setup.puml` 88–94.
-
-<a id="78-withdrawal-approval-and-psbt-distribution"></a>
 ### 7.8 Withdrawal: approval and PSBT distribution
 
 [Back to TOC](#table-of-contents)
+
 
 **Family `Withdrawal.Initiator.LocalPSBTStart`**  
 Sender: `User(initiator)` then `Niso(initiator)` then `Boomlet(initiator)` then `ST(initiator)`  
@@ -1084,11 +1182,10 @@ Purpose: inform WT that the peer locally approved the same transaction.
 Receiver validations: decrypt, verify signature, check magic, `tx_id`, and freshness relative to WT height and earlier WT approval.  
 State effect on receiver: WT adds the approval to the approval collection and, once sufficient approvals arrive, redistributes approval collections.  
 Source anchors: `withdrawal.md` 22–26; `non_initiator_withdrawal.puml` 22–26; `initiator_withdrawal.puml` 24–25.
-
-<a id="79-withdrawal-initial-duress-check-and-commitment"></a>
 ### 7.9 Withdrawal: initial duress check and commitment
 
 [Back to TOC](#table-of-contents)
+
 
 **Family `Withdrawal.InitialDuressCheck`**  
 Sender: `Boomlet(i)` via `Niso(i)` to `ST(i)` and back  
@@ -1126,11 +1223,10 @@ Purpose: commit each non-initiator after the initiator commit has already been W
 Receiver validations: WT verifies outer and inner signatures, magic `"commit"`, expected `tx_id`, and freshness; SAR processes the placeholder as above.  
 State effect on receiver: once all commits exist, WT distributes the full commit collection and the corresponding SAR-signed placeholder to each peer.  
 Source anchors: `withdrawal.md` 39–45; `non_initiator_withdrawal.puml` 39–44; `initiator_withdrawal.puml` 41–45.
-
-<a id="710-withdrawal-ping-pong-reached-pings-and-signing-handoff"></a>
 ### 7.10 Withdrawal: ping, pong, reached-pings, and signing handoff
 
 [Back to TOC](#table-of-contents)
+
 
 **Family `Withdrawal.Ping`**  
 Sender: each `Boomlet(i)` via `Niso(i)`  
@@ -1176,186 +1272,167 @@ Purpose: export the peer’s completed signed PSBT fragment and let WT aggregate
 Receiver validations: the sources do not spell out a separate post-export validity check beyond aggregation, so this specification treats aggregation success as an abstract WT action guarded by receipt of all five signed PSBTs.  
 State effect on receiver: WT aggregates and relays the final signed transaction; Boomlet resets withdrawal-local state and regenerates `mystery_i`.  
 Source anchors: `withdrawal.md` 70–73; `initiator_withdrawal.puml` 70–73; `DEEPDIVE.md` withdrawal Group 7.
-
-<a id="8-global-phase-machine"></a>
 ## 8. Global phase machine
 
 [Back to TOC](#table-of-contents)
 
-The top-level machine is named `Global`. It advances only when the source files authorize a phase boundary.
 
-<a id="globalpresetup"></a>
+The top-level machine is named `Global`. It advances only when the source files authorize a phase boundary.
 ### `Global.PreSetup`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: no completed Boomerang setup exists for the peer set.  
 Exit condition: the first SAR sign-up message is sent for each peer that will participate in the setup.  
 Outbound transitions: to `Global.Setup.SARSignup`.  
 Notes: this phase does not yet imply the existence of `boomerang_params` or any Boomlet state.
-
-<a id="globalsetupsarsignup"></a>
 ### `Global.Setup.SARSignup`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: `Phone(i)` has user doxing inputs and starts SAR registration.  
 Exit condition: all participating peers reached the user-visible `"setup_sar_registered_and_connected_to_phone"` point.  
 Core effect: establish `doxing_key_i`, `doxing_data_identifier_i`, and a synced phone/SAR registration.  
 Outbound transitions: to `Global.Setup.DuressSetup`.
-
-<a id="globalsetupduresssetup"></a>
 ### `Global.Setup.DuressSetup`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: local Iso and Boomlet installation begins and ST pairing is available.  
 Exit condition: each peer’s Boomlet emitted `"setup_duress_finished"` and Iso returned the mnemonic.  
 Core effect: establish `normal_pubkey_i`, Boomlet identity and boom-share keys, shared Boomlet–ST secret, and `duress_consent_set_i`.  
 Outbound transitions: to `Global.Setup.OnlineIdentityAndParams`.
-
-<a id="globalsetuponlineidentityandparams"></a>
 ### `Global.Setup.OnlineIdentityAndParams`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: each user connects Boomlet to Niso after offline duress setup.  
 Exit condition: `boomerang_params` are fixed across all peers.  
 Core effect: establish Tor identity, exchange peer ids and addresses out of band, verify the boomerang parameter seed through ST, and obtain all-peers signed equality on `boomerang_params`.  
 Outbound transitions: to `Global.Setup.WTRegistration`.
-
-<a id="globalsetupwtregistration"></a>
 ### `Global.Setup.WTRegistration`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: `boomerang_params` are fixed and each Boomlet has generated its initial `mystery_i`.  
 Exit condition: all peers have local proof that WT registration is active for every peer.  
 Core effect: create `boomerang_params_fingerprint`, register peers and their Tor identities with WT, settle WT service fees, and synchronize `shared_state_active_wt_fingerprint`.  
 Outbound transitions: to `Global.Setup.SARActivation`.
-
-<a id="globalsetupsaractivation"></a>
 ### `Global.Setup.SARActivation`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: WT registration is confirmed.  
 Exit condition: all peers have local proof that SAR finalization is active for every peer.  
 Core effect: link each Boomlet identity to its pre-existing SAR registration through WT, store `sar_setup_response_i`, and synchronize `shared_state_active_sar_fingerprint`.  
 Outbound transitions: to `Global.Setup.Backup`.
-
-<a id="globalsetupbackup"></a>
 ### `Global.Setup.Backup`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: SAR activation is confirmed and the user is told to initialize the backup procedure.  
 Exit condition: local Boomlet accepted `backup_done_signed_by_boomletwo_i`.  
 Core effect: install Boomletwo, authorize backup export with the normal key, export Boomlet state excluding current `mystery_i`, verify descriptor and static doxing fingerprint offline, import backup into Boomletwo, and obtain signed backup completion from Boomletwo.  
 Outbound transitions: to `Global.Setup.FinalSynchronization`.
-
-<a id="globalsetupfinalsynchronization"></a>
 ### `Global.Setup.FinalSynchronization`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: local backup procedure completed.  
 Exit condition: every peer reached `"setup_done"`.  
 Core effect: synchronize `shared_state_active_backup_fingerprint`, prove that all peers completed backup creation, and mark setup complete.  
 Outbound transitions: to `Global.ActiveReady`.
-
-<a id="globalactiveready"></a>
 ### `Global.ActiveReady`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: setup completed successfully and no boomerang-regime withdrawal is active.  
 Exit condition: either the initiator starts a withdrawal ceremony after `milestone_block_0`, or an out-of-scope ancillary/deterministic fallback path is invoked.  
 Core effect: hold inherited setup state stable for later withdrawal.  
 Outbound transitions: to `Global.Withdrawal.Initiation`, or to explicit out-of-scope branches such as ancillary recovery or deterministic regime use.
-
-<a id="globalwithdrawalinitiation"></a>
 ### `Global.Withdrawal.Initiation`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: an initiator user submits a PSBT and `milestone_block_0` has been reached.  
 Exit condition: WT accepted the initiator approval and distributed `wt_tx_approval` plus encrypted PSBT copies to non-initiators.  
 Core effect: latch a candidate `tx_id`, run the explicit ST/Boomlet nonce-coupled `tx_id` challenge-response, and only then create the initiator approval message.  
 Outbound transitions: to `Global.Withdrawal.Approval`.
-
-<a id="globalwithdrawalapproval"></a>
 ### `Global.Withdrawal.Approval`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: non-initiators have received the WT initiation bundle.  
 Exit condition: WT has collected the expected approval set and all peers have locally validated the approval collection required to proceed.  
 Core effect: each non-initiator locally approves the PSBT, runs its own explicit ST/Boomlet nonce-coupled `tx_id` challenge-response, emits its own approval only after that transcript succeeds, and all peers mirror approval validations.  
 Outbound transitions: to `Global.Withdrawal.Commitment`.
-
-<a id="globalwithdrawalcommitment"></a>
 ### `Global.Withdrawal.Commitment`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: all approvals needed by the sources are present.  
 Exit condition: WT has redistributed the full commit collection and each peer verified its own SAR-signed placeholder.  
 Core effect: initial ST/Boomlet nonce-coupled duress check, initiator commit, non-initiator approvals bundle asymmetry, non-initiator commits, SAR processing of each placeholder, and full commit collection redistribution.  
 Outbound transitions: to `Global.Withdrawal.DiggingGame`.
-
-<a id="globalwithdrawaldigginggame"></a>
 ### `Global.Withdrawal.DiggingGame`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: every peer verified the commit collection and entered the digging game with `counter=0`, `ping_seq_num=0`, `reached_mystery_flag=0`, and empty reached collections.  
 Exit condition: WT holds a valid reached ping for every peer and distributes `reached_pings_collection`.  
 Core effect: repeated ping-pong rounds, optional recurring ST/Boomlet nonce-coupled duress checks before selected next pings, counter increments, monotone reaching of local mysteries, and WT loop termination on all-peers reached condition.  
 Outbound transitions: to `Global.Signing`.
-
-<a id="globalsigning"></a>
 ### `Global.Signing`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: each peer verified `reached_pings_collection`, updated the saved PSBT with `hydrated_psbt`, and emitted `"withdrawal_ready_to_sign"`.  
 Exit condition: each peer has a locally stored `signed_psbt_i` and the user reconnected Boomlet to Niso for export.  
 Core effect: Iso/Boomlet MuSig2 cooperation using the inherited setup material plus the hydrated PSBT.  
 Outbound transitions: to `Global.Broadcast`.
-
-<a id="globalbroadcast"></a>
 ### `Global.Broadcast`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: each Boomlet has exported `psbt_signed_i` to its Niso and Niso forwarded it to WT.  
 Exit condition: WT aggregated all five signed PSBTs and relayed the resulting signed transaction to the network.  
 Core effect: aggregate and relay the fully signed transaction.  
 Outbound transitions: to `Global.PostWithdrawalReset`.
-
-<a id="globalpostwithdrawalreset"></a>
 ### `Global.PostWithdrawalReset`
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: local Boomlet exported `psbt_signed_i`.  
 Exit condition: local withdrawal state is cleared and `mystery_i` has been regenerated.  
 Core effect: clear withdrawal-specific local state except the signed-PSBT artifact the sources preserve long enough to export, and regenerate the next `mystery_i`.  
 Outbound transitions: to `Global.ActiveReady`.  
 Important boundary: this reset is specified only for the immediate local Boomlet state after signing; multi-ceremony rollover, descriptor extension, and deterministic fallback are outside the current machine.
-
-<a id="9-parameterized-composite-machine-peeri"></a>
 ## 9. Parameterized composite machine `Peer(i)`
 
 [Back to TOC](#table-of-contents)
 
-`Peer(i)` is the peer-local composite actor family, parameterized by `i in {0..4}`. It contains the sub-actors `User(i)`, `Phone(i)`, `Iso(i)`, `Niso(i)`, `Boomlet(i)`, `Boomletwo(i)`, and `ST(i)`. `WT` and `SAR` remain external actors even though `Peer(i)` interacts with them often.
 
-<a id="91-composite-states"></a>
+`Peer(i)` is the peer-local composite actor family, parameterized by `i in {0..4}`. It contains the sub-actors `User(i)`, `Phone(i)`, `Iso(i)`, `Niso(i)`, `Boomlet(i)`, `Boomletwo(i)`, and `ST(i)`. `WT` and `SAR` remain external actors even though `Peer(i)` interacts with them often.
 ### 9.1 Composite states
 
 [Back to TOC](#table-of-contents)
+
 
 **`Peer(i).Setup.SARRegistered` [DERIVED]**  
 Meaning: Phone/SAR registration has completed and user may proceed to offline hardware installation.  
@@ -1393,11 +1470,10 @@ Meaning: setup state is complete and inherited, but no boomerang withdrawal is a
 Entry condition: `"setup_done"` delivered to `User(i)`.  
 Exit condition: withdrawal starts or an out-of-scope ancillary/deterministic path is taken.  
 Anchors: setup completion and all later withdrawal note blocks.
-
-<a id="92-initiator-versus-non-initiator-asymmetry"></a>
 ### 9.2 Initiator versus non-initiator asymmetry
 
 [Back to TOC](#table-of-contents)
+
 
 The initiating peer, denoted `Peer(0)` only by role and not by permanent identity, enters withdrawal through a locally created PSBT and sends the first approval to WT. Non-initiators enter only when WT forwards the initiator bundle containing `wt_tx_approval`, the initiator’s signed approval, and an encrypted PSBT copy. That asymmetry persists through the approval phase and into the commitment phase:
 
@@ -1414,11 +1490,10 @@ The authoritative TLA+ withdrawal model now makes the ST/Boomlet challenge-respo
 - `withdrawal.md` steps `52-57` map to `AwaitingRecurringDuressAck`, where a selected digging round pauses before the next ping until the nonce-bound recurring duress response has been accepted.
 
 This asymmetry ends after WT redistributes the full commit collection and each peer verifies its SAR-signed placeholder. From that point onward, the non-initiator withdrawal diagram explicitly states that the non-initiator follows the same steps as the initiator. This specification therefore converges both roles into a common `Peer(i).Withdrawal.DiggingGame` state beginning at commit-collection verification.
-
-<a id="93-composite-withdrawal-states"></a>
 ### 9.3 Composite withdrawal states
 
 [Back to TOC](#table-of-contents)
+
 
 **`Peer(i).Withdrawal.Initiator.AwaitingLocalApproval`**  
 Entry: user submitted a PSBT to `Niso(i)` and local milestone/freshness guards passed.  
@@ -1474,20 +1549,22 @@ Anchors: `withdrawal.md` 64–69; `initiator_withdrawal.puml` 64–69.
 Entry: Boomlet responded to the signed-PSBT export request.  
 Exit: WT aggregated all signed PSBTs and local Boomlet reset completed.  
 Anchors: `withdrawal.md` 70–73; `initiator_withdrawal.puml` 70–73.
-
-<a id="10-actor-local-machines"></a>
 ## 10. Actor-local machines
 
 [Back to TOC](#table-of-contents)
 
-The states below are the states explicitly used in this specification. Every state not explicitly named in the sources is marked `[DERIVED]`. For brevity, repeated signature and freshness checks are described once and then referred to by family where the source duplicates them.
 
-<a id="101-useri-machine"></a>
+The states below are the states explicitly used in this specification. Every state not explicitly named in the sources is marked `[DERIVED]`. For brevity, repeated signature and freshness checks are described once and then referred to by family where the source duplicates them.
 ### 10.1 `User(i)` machine
 
 [Back to TOC](#table-of-contents)
 
+
 #### `User(i).Setup.AwaitingSARInvoice` `[DERIVED]`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: the user has supplied SAR registration inputs to Phone and is waiting for invoice details.  
 Stored variables relevant in this state: none beyond human-held `doxing_password`, `static_doxing_data`, `sar_ids_collection_i`.  
 Allowed incoming events/messages: SAR payment info forwarded by Phone.  
@@ -1499,6 +1576,10 @@ Failure exits: payment not made or invoice rejected; behavior after refusal is u
 Source anchors: `setup.md` 1–4; `setup.puml` 1–4.
 
 #### `User(i).Setup.AwaitingPhoneSARSync` `[DERIVED]`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: the user has paid SAR and waits for phone/SAR synchronization confirmation.  
 Stored variables relevant: payment receipt evidence.  
 Allowed incoming events/messages: phone notification that SAR registration is complete and in sync.  
@@ -1510,6 +1591,10 @@ Failure exits: missing SAR acknowledgment; terminal for the current setup attemp
 Source anchors: `setup.md` 5–9; `setup.puml` 5–9.
 
 #### `User(i).Setup.AwaitingMnemonic`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: the user is engaged in offline Boomlet installation and duress setup, but mnemonic has not yet been returned by Iso.  
 Stored variables relevant: chosen passphrase, doxing password, consent-set memory under formation.  
 Allowed incoming events/messages: ST displays initial consent challenge, ST displays confirmation challenge, Iso returns mnemonic.  
@@ -1521,6 +1606,10 @@ Failure exits: failed duress confirmation; retry semantics are ambiguous and rec
 Source anchors: `setup.md` 9–28; `setup.puml` 9–28; `duress_setup.puml`.
 
 #### `User(i).Setup.ExchangingPeerIdentityOutOfBand`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: the user has received the signed Tor identity bundle and exchanges it securely with peers.  
 Stored variables relevant: local `peer_i_id`, signed Tor address, received peer bundles.  
 Allowed incoming events/messages: ST display/output of local identity bundle; out-of-band peer bundles from other users.  
@@ -1532,6 +1621,10 @@ Failure exits: incomplete peer set or distrust of out-of-band data; terminal or 
 Source anchors: `setup.md` 29–35; `setup.puml` 29–35.
 
 #### `User(i).Setup.AwaitingParamApprovalOnST`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: the user is directly verifying the boomerang parameter seed shown through ST.  
 Stored variables relevant: expected peer ids, WT ids, milestone blocks.  
 Allowed incoming events/messages: ST display of `boomerang_params_seed`.  
@@ -1543,6 +1636,10 @@ Failure exits: user rejects the displayed seed; terminal for this setup attempt 
 Source anchors: `setup.md` 36–45; `setup.puml` 36–45.
 
 #### `User(i).Setup.AwaitingWTFeePayment` `[DERIVED]`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: peer parameters are fixed and WT registration invoice has been presented.  
 Stored variables relevant: WT invoice details.  
 Allowed incoming events/messages: WT service fee payment info from Niso.  
@@ -1554,6 +1651,10 @@ Failure exits: payment not made or invoice disputed; progress stops.
 Source anchors: `setup.md` 49–53; `setup.puml` 49–53.
 
 #### `User(i).Setup.AwaitingBackupProcedure`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: SAR finalization is complete and the user must move through the Boomletwo backup choreography.  
 Stored variables relevant: `milestone_block_collection`, `network`, mnemonic, passphrase, static doxing data, doxing password.  
 Allowed incoming events/messages: Niso backup-initiation notification; Iso prompts to connect Boomletwo or Boomlet; final setup-done notification.  
@@ -1565,6 +1666,10 @@ Failure exits: backup import failure, mismatch in descriptor or SAR fingerprint 
 Source anchors: `setup.md` 71–94; `setup.puml` 71–94.
 
 #### `User(i).ActiveReady`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: setup is complete and no boomerang withdrawal is active.  
 Stored variables relevant: mnemonic, passphrase, remembered consent countries.  
 Allowed incoming events/messages: for initiator, local desire to withdraw; for non-initiator, PSBT presentation from Niso after WT initiation.  
@@ -1575,6 +1680,10 @@ Next states: `User(i).Withdrawal.Initiator.ReviewingLocalTxId`, or `User(i).With
 Failure exits: none.
 
 #### `User(i).Withdrawal.Initiator.ReviewingLocalTxId`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: initiator user has created the PSBT and is validating the locally displayed `tx_id` on ST.  
 Stored variables relevant: locally created PSBT.  
 Allowed incoming events/messages: `tx_id` from ST.  
@@ -1586,6 +1695,10 @@ Failure exits: mismatch between ST-displayed `tx_id` and local PSBT.
 Source anchors: `withdrawal.md` 1–6; `initiator_withdrawal.puml` 1–6.
 
 #### `User(i).Withdrawal.NonInitiator.ReviewingPSBT`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: non-initiator user is shown the initiator’s PSBT and initiator identity by local Niso.  
 Stored variables relevant: decrypted PSBT, initiator peer identity.  
 Allowed incoming events/messages: PSBT plus initiator id, later ST-displayed `tx_id`.  
@@ -1597,6 +1710,10 @@ Failure exits: PSBT rejection or `tx_id` mismatch.
 Source anchors: `withdrawal.md` 13–20; `non_initiator_withdrawal.puml` 13–20.
 
 #### `User(i).Withdrawal.RespondingToDuressCheck`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: the user is answering either the initial commitment-time duress check or a later repeated digging-game duress check.  
 Stored variables relevant: remembered consent countries.  
 Allowed incoming events/messages: ST-displayed duress check space.  
@@ -1608,6 +1725,10 @@ Failure exits: no response, malformed response, or freshness failure on the resp
 Source anchors: `withdrawal.md` 27–33, 27n–33n, and 52–57; both withdrawal diagrams; `duress.md` withdrawal section.
 
 #### `User(i).Withdrawal.ReadyToSignViaIso`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: local peer reached the WT break condition and Niso instructed the user to connect Boomlet to Iso.  
 Stored variables relevant: mnemonic, passphrase.  
 Allowed incoming events/messages: Niso readiness magic, Iso completion magic after signing.  
@@ -1619,6 +1740,10 @@ Failure exits: missing local signing inputs or inability to reconnect hardware.
 Source anchors: `withdrawal.md` 62–70; `initiator_withdrawal.puml` 62–70.
 
 #### `User(i).Withdrawal.AwaitingBroadcast`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: local signed PSBT has been created and exported; WT aggregation and relay are pending.  
 Stored variables relevant: none additional.  
 Allowed incoming events/messages: none specified back to the user after WT broadcast.  
@@ -1628,13 +1753,16 @@ Emitted messages: none.
 Next states: `User(i).ActiveReady` after local post-withdrawal reset.  
 Failure exits: WT aggregation failure or missing peer signatures, which are outside user control and not separately signaled to the user in the sources.  
 Source anchors: `withdrawal.md` 69–73; `initiator_withdrawal.puml` 69–73.
-
-<a id="102-phonei-machine"></a>
 ### 10.2 `Phone(i)` machine
 
 [Back to TOC](#table-of-contents)
 
+
 #### `Phone(i).Setup.AwaitingRegistrationInput`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: phone has not yet begun SAR registration.  
 Stored variables relevant: none.  
 Allowed incoming events/messages: user supplies `doxing_password`, `sar_ids_collection_i`, `static_doxing_data`.  
@@ -1646,6 +1774,10 @@ Failure exits: none specified.
 Source anchors: `setup.md` 1; `setup.puml` 1.
 
 #### `Phone(i).Setup.AwaitingPaymentInfo`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: phone has initiated SAR registration and awaits invoice details.  
 Stored variables relevant: `doxing_key_i`, `doxing_data_identifier_i`.  
 Allowed incoming events/messages: `sar_service_fee_payment_info` from SAR.  
@@ -1657,6 +1789,10 @@ Failure exits: invoice SAR id mismatch.
 Source anchors: `setup.md` 2–3; `setup.puml` 2–3.
 
 #### `Phone(i).Setup.AwaitingUserReceipt`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: phone awaits proof that the user paid the SAR invoice.  
 Stored variables relevant: invoice details, `doxing_key_i`, `doxing_data_identifier_i`.  
 Allowed incoming events/messages: payment receipt from User.  
@@ -1668,6 +1804,10 @@ Failure exits: none specified.
 Source anchors: `setup.md` 4–6; `setup.puml` 4–6.
 
 #### `Phone(i).Setup.AwaitingSARSyncAck`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: phone has sent receipt and encrypted doxing data and is waiting for SAR sync confirmation.  
 Stored variables relevant: `doxing_key_i`, `doxing_data_identifier_i`, encrypted data streams.  
 Allowed incoming events/messages: SAR sync acknowledgment.  
@@ -1679,6 +1819,10 @@ Failure exits: missing SAR acknowledgment.
 Source anchors: `setup.md` 6–8; `setup.puml` 6–8.
 
 #### `Phone(i).Setup.SyncedWithSAR`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: phone is in steady state with SAR and continues sending encrypted dynamic data.  
 Stored variables relevant: `doxing_key_i`, `doxing_data_identifier_i`, dynamic doxing data feed.  
 Allowed incoming events/messages: dynamic doxing updates from the originating device or phone OS.  
@@ -1688,13 +1832,16 @@ Emitted messages: recurring encrypted dynamic doxing data to SAR.
 Next states: remains here across setup and withdrawal.  
 Failure exits: loss or tampering of the dynamic data feed, recognized as a concern rather than a handled branch.  
 Source anchors: `setup.md` 6–8; `duress.md` doxing-data section; `DEEPDIVE.md` concern on phone data.
-
-<a id="103-isoi-machine"></a>
 ### 10.3 `Iso(i)` machine
 
 [Back to TOC](#table-of-contents)
 
+
 #### `Iso(i).Off`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Iso is powered down and retains no operative state.  
 Stored variables relevant: none.  
 Allowed incoming events/messages: user power-on with setup or backup mode intent, or signing intent.  
@@ -1706,6 +1853,10 @@ Failure exits: none.
 Source anchors: withdrawal note on inherited state; `setup.md` 27–28 and 71–72.
 
 #### `Iso(i).Setup.Running`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Iso is active for initial offline setup before Niso participation.  
 Stored variables relevant: session copies of network, entropy bytes, passphrase, doxing password, SAR ids, mnemonic, derived normal key material.  
 Allowed incoming events/messages: user setup inputs, Boomlet identity pubkey, ST identity pubkey, ST duress responses, Boomlet duress completion.  
@@ -1717,6 +1868,10 @@ Failure exits: installation failure, pairing failure, duress confirmation failur
 Source anchors: `setup.md` 9–27; `setup.puml` 9–27.
 
 #### `Iso(i).Setup.BackupMode`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Iso is active to install Boomletwo and orchestrate backup import.  
 Stored variables relevant: session-local backup verification inputs, reconstructed normal key material, `sar_setup_response_i`, encrypted backup blob.  
 Allowed incoming events/messages: User backup-mode initiation, Boomletwo identity pubkey, Boomlet backup export, backup-done acknowledgment, Boomlet backup verification result.  
@@ -1728,6 +1883,10 @@ Failure exits: descriptor mismatch, doxing identifier mismatch, static doxing-da
 Source anchors: `setup.md` 72–87; `setup.puml` 72–87.
 
 #### `Iso(i).Withdrawal.SigningReady`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Iso has been powered on for signing and has received network, mnemonic, and passphrase.  
 Stored variables relevant: reconstructed normal private key material.  
 Allowed incoming events/messages: user signing inputs.  
@@ -1739,6 +1898,10 @@ Failure exits: inability to reconstruct signing material from mnemonic/passphras
 Source anchors: `withdrawal.md` 63–65; `initiator_withdrawal.puml` 63–65.
 
 #### `Iso(i).Withdrawal.CoordinatingMuSig2`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Iso is actively collaborating with Boomlet to sign the hydrated PSBT.  
 Stored variables relevant: PSBT, descriptor, reconstructed normal-key material, pubnonce_normal, partialsig_normal, signed PSBT copy.  
 Allowed incoming events/messages: PSBT, descriptor, Boomlet pubkey share, `pubnonce_boom`, then `partialsig_boom`.  
@@ -1748,13 +1911,16 @@ Emitted messages: `pubnonce_normal`, `partialsig_normal` to Boomlet; completion 
 Next states: `Iso(i).Off`.  
 Failure exits: signing failure or mismatch not separately specified in the sources.  
 Source anchors: `withdrawal.md` 65–69; `initiator_withdrawal.puml` 65–69.
-
-<a id="104-sti-machine"></a>
 ### 10.4 `ST(i)` machine
 
 [Back to TOC](#table-of-contents)
 
+
 #### `ST(i).Unpaired`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: ST does not yet have a paired Boomlet identity.  
 Stored variables relevant: none.  
 Allowed incoming events/messages: `boomlet_i_identity_pubkey` from Iso.  
@@ -1766,6 +1932,10 @@ Failure exits: none specified.
 Source anchors: `setup.md` 11–13; `setup.puml` 11–13; `duress_setup.puml` 1–4.
 
 #### `ST(i).Paired.Idle`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: ST is paired and waiting for the next Boomlet-originated challenge or display request.  
 Stored variables relevant: paired keys and shared secret.  
 Allowed incoming events/messages: encrypted duress setup challenge, encrypted boomerang params seed, encrypted `tx_id_with_nonce`, encrypted withdrawal duress-check challenge.  
@@ -1776,6 +1946,10 @@ Next states: `ST(i).Setup.AwaitingConsentSelection`, `ST(i).Setup.AwaitingConsen
 Failure exits: decryption failure or malformed challenge.
 
 #### `ST(i).Setup.AwaitingConsentSelection`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: ST has decrypted the initial setup challenge space and is waiting for the user’s consent-set choices.  
 Stored variables relevant: `duress_check_space_i`, copied nonce.  
 Allowed incoming events/messages: user joystick selection.  
@@ -1787,6 +1961,10 @@ Failure exits: none specified.
 Source anchors: `setup.md` 14–19; `setup.puml` 14–19.
 
 #### `ST(i).Setup.AwaitingConsentConfirmation`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: ST has decrypted the second setup challenge space and is waiting for the user to reproduce the consent set.  
 Stored variables relevant: second `duress_check_space_i`, copied nonce.  
 Allowed incoming events/messages: user joystick selection.  
@@ -1798,6 +1976,10 @@ Failure exits: none specified by ST itself; failure is detected at Boomlet.
 Source anchors: `setup.md` 20–26; `setup.puml` 20–26; `duress_setup.puml` 11–16.
 
 #### `ST(i).Setup.AwaitingParamConfirmation`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: ST has decrypted `boomerang_params_seed` and is displaying it to the user.  
 Stored variables relevant: `boomerang_params_seed_with_nonce`.  
 Allowed incoming events/messages: user acknowledgment magic.  
@@ -1809,6 +1991,10 @@ Failure exits: none specified.
 Source anchors: `setup.md` 36–41; `setup.puml` 36–41.
 
 #### `ST(i).Withdrawal.AwaitingTxIdAcknowledgement`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: ST has decrypted `tx_id_with_nonce` and is displaying the `tx_id` to the user.  
 Stored variables relevant: `tx_id_with_nonce`.  
 Allowed incoming events/messages: user acknowledgment magic.  
@@ -1820,6 +2006,10 @@ Failure exits: local user refusal or mismatch observed by the user.
 Source anchors: `withdrawal.md` 3–7 and 16–21; both withdrawal diagrams.
 
 #### `ST(i).Withdrawal.AwaitingDuressSelection`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: ST has decrypted a withdrawal duress-check challenge and is displaying the challenge columns to the user.  
 Stored variables relevant: `duress_check_space_i`, copied nonce.  
 Allowed incoming events/messages: user joystick selection.  
@@ -1829,13 +2019,16 @@ Emitted messages: encrypted duress-check response.
 Next states: `ST(i).Paired.Idle`.  
 Failure exits: no user response or malformed local input.  
 Source anchors: `withdrawal.md` 28–32, 28n–32n, and 52–56; both withdrawal diagrams; `duress.md` withdrawal section.
-
-<a id="105-boomleti-machine"></a>
 ### 10.5 `Boomlet(i)` machine
 
 [Back to TOC](#table-of-contents)
 
+
 #### `Boomlet(i).Uninstalled`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: no personalized Boomlet applet exists on the smart card.  
 Stored variables relevant: none.  
 Allowed incoming events/messages: installation payload from Iso.  
@@ -1847,6 +2040,10 @@ Failure exits: installation on non-empty card or installation failure.
 Source anchors: `setup.md` 9–10; `setup.puml` 9–10.
 
 #### `Boomlet(i).Setup.AwaitingSTPairing`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Boomlet is installed but has not yet completed ST pairing.  
 Stored variables relevant: identity keys, boom share, `peer_i_id`, Tor secret key, `doxing_key_i`, SAR ids.  
 Allowed incoming events/messages: `st_i_identity_pubkey`.  
@@ -1858,6 +2055,10 @@ Failure exits: missing or malformed ST key.
 Source anchors: `setup.md` 10–15; `setup.puml` 10–15.
 
 #### `Boomlet(i).Setup.AwaitingInitialConsentResponse`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Boomlet has sent the initial duress-setup challenge and awaits the user’s first consent-set selection.  
 Stored variables relevant: `duress_check_space_i`, copied nonce, shared ST secret.  
 Allowed incoming events/messages: encrypted `duress_signal_index_i` with nonce from ST via Iso.  
@@ -1869,6 +2070,10 @@ Failure exits: nonce mismatch or malformed selection.
 Source anchors: `setup.md` 14–20; `setup.puml` 14–20.
 
 #### `Boomlet(i).Setup.AwaitingConsentConfirmationResponse`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Boomlet awaits the user’s reproduction of the consent set.  
 Stored variables relevant: confirmation `duress_check_space_i`, stored `duress_consent_set_i`, copied nonce.  
 Allowed incoming events/messages: encrypted confirmation indices via Iso.  
@@ -1880,6 +2085,10 @@ Failure exits: failed confirmation; retry/restart behavior ambiguous and recorde
 Source anchors: `setup.md` 20–27; `setup.puml` 20–27; `duress_setup.puml` 11–17.
 
 #### `Boomlet(i).Setup.OfflineReadyAwaitingNiso`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: offline setup completed and Boomlet is waiting to be connected to Niso.  
 Stored variables relevant: all setup-persistent keying material and `duress_consent_set_i`.  
 Allowed incoming events/messages: `"setup_initialized"` from Niso.  
@@ -1891,6 +2100,10 @@ Failure exits: none specified.
 Source anchors: `setup.md` 27–36; `setup.puml` 27–36.
 
 #### `Boomlet(i).Setup.AwaitingParamSeedApproval`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Boomlet has received peer addresses, WT ids, and milestones and is waiting for the ST-signed approval of the parameter seed.  
 Stored variables relevant: `peer_addresses_collection`, `wt_ids_collection`, `milestone_block_collection`, `boomerang_params_seed_with_nonce`.  
 Allowed incoming events/messages: ST-signed encrypted parameter-seed approval via Niso.  
@@ -1902,6 +2115,10 @@ Failure exits: invalid peer signature, missing self entry, ST signature mismatch
 Source anchors: `setup.md` 35–43; `setup.puml` 35–43.
 
 #### `Boomlet(i).Setup.AwaitingPeerParamConsensus`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Boomlet has emitted its signed `boomerang_params` and waits for all peers’ matching signatures.  
 Stored variables relevant: `boomerang_params`, own signed copy.  
 Allowed incoming events/messages: all-peers signed parameter collection via Niso.  
@@ -1913,6 +2130,10 @@ Failure exits: signature mismatch or content mismatch.
 Source anchors: `setup.md` 43–49; `setup.puml` 43–49.
 
 #### `Boomlet(i).Setup.AwaitingWTRegistrationAck`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Boomlet has started WT registration and waits for the suffixed WT acknowledgment and then peer-wide WT-active sync.  
 Stored variables relevant: `mystery_i`, `boomerang_params_fingerprint`, signed sorted peer key list, shared WT-active fingerprint.  
 Allowed incoming events/messages: WT registration acknowledgment via Niso; all-peers WT-active fingerprint collection.  
@@ -1924,6 +2145,10 @@ Failure exits: invoice unpaid, WT acknowledgment mismatch, peer sync mismatch.
 Source anchors: `setup.md` 46–59; `setup.puml` 46–59.
 
 #### `Boomlet(i).Setup.AwaitingSARActivationAck`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Boomlet has sent SAR ids and encrypted identifier through WT and waits for the SAR finalization response plus all-peers SAR-active sync.  
 Stored variables relevant: `doxing_data_identifier_i`, `sar_ids_collection_i`, `sar_setup_response_i`, SAR-active fingerprint.  
 Allowed incoming events/messages: WT-suffixed SAR response; all-peers SAR-active fingerprint collection.  
@@ -1935,6 +2160,10 @@ Failure exits: SAR identifier mismatch, SAR signature mismatch, peer sync mismat
 Source anchors: `setup.md` 60–70; `setup.puml` 60–70.
 
 #### `Boomlet(i).Setup.AwaitingBackupCompletion`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Boomlet is ready to serve a backup request and later verify backup completion from Boomletwo.  
 Stored variables relevant: all setup-persistent state, excluding current `mystery_i` from export.  
 Allowed incoming events/messages: signed backup request from Iso; `backup_done_signed_by_boomletwo_i` from Iso after Boomletwo import.  
@@ -1946,6 +2175,10 @@ Failure exits: invalid backup request, invalid or mismatched `backup_done`.
 Source anchors: `setup.md` 75–86; `setup.puml` 75–86.
 
 #### `Boomlet(i).Setup.AwaitingFinalBackupSync`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: local backup completed and Boomlet awaits all-peers backup-fingerprint equality.  
 Stored variables relevant: `shared_state_active_backup_fingerprint`.  
 Allowed incoming events/messages: all-peers backup fingerprint collection.  
@@ -1957,6 +2190,10 @@ Failure exits: peer sync mismatch.
 Source anchors: `setup.md` 88–94; `setup.puml` 88–94.
 
 #### `Boomlet(i).ActiveReady`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: setup is complete and no boomerang withdrawal is active.  
 Stored variables relevant: all setup-persistent state, including current `mystery_i`.  
 Allowed incoming events/messages: for initiator, PSBT plus local height from Niso; for non-initiator, WT initiation bundle plus encrypted PSBT.  
@@ -1967,6 +2204,10 @@ Next states: initiator or non-initiator withdrawal entry states.
 Failure exits: none.
 
 #### `Boomlet(i).Withdrawal.Initiator.AwaitingPSBT`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: initiator Boomlet received a PSBT from local Niso but has not yet emitted the initiator approval.  
 Stored variables relevant: candidate `psbt_i`, candidate `tx_id`, `niso_i_event_block_height`.  
 Allowed incoming events/messages: PSBT, ST-signed `tx_id_with_nonce`.  
@@ -1978,6 +2219,10 @@ Failure exits: milestone not reached, invalid ST acknowledgment, PSBT-derived `t
 Source anchors: `withdrawal.md` 1–8; `initiator_withdrawal.puml` 1–8.
 
 #### `Boomlet(i).Withdrawal.NonInitiator.AwaitingWTApprovalBundle`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: non-initiator Boomlet is waiting for WT’s initiation bundle.  
 Stored variables relevant: inherited setup state only.  
 Allowed incoming events/messages: `wt_tx_approval`, initiator approval, encrypted PSBT, local `niso_i_event_block_height`; later ST-approved local `tx_id`.  
@@ -1989,6 +2234,10 @@ Failure exits: invalid signatures, stale WT approval, PSBT decrypt or `tx_id` mi
 Source anchors: `withdrawal.md` 11–23; `non_initiator_withdrawal.puml` 11–23.
 
 #### `Boomlet(i).Withdrawal.AwaitingAllApprovals`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: local approval has been emitted and the peer awaits the approval set required to begin commitment-time duress checking.  
 Stored variables relevant: `tx_id`, local and remote approvals, `wt_tx_approval`.  
 Allowed incoming events/messages: approval collections from WT.  
@@ -2000,6 +2249,10 @@ Failure exits: approval-set mismatch or freshness failure.
 Source anchors: `withdrawal.md` 24–27 and 26–27n; both withdrawal diagrams.
 
 #### `Boomlet(i).Withdrawal.AwaitingInitialDuressResponse`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: local peer has all needed approvals and is waiting for the initial duress response.  
 Stored variables relevant: `duress_check_space_i`, `duress_placeholder_plaintext_i`.  
 Allowed incoming events/messages: encrypted duress-response indices from ST via Niso.  
@@ -2011,6 +2264,10 @@ Failure exits: malformed response or freshness failure.
 Source anchors: `withdrawal.md` 27–35n; both withdrawal diagrams; `duress.md` withdrawal section.
 
 #### `Boomlet(i).Withdrawal.NonInitiator.AwaitingWTInitiatorCommit`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: non-initiator has sent the approvals bundle and now waits for WT’s acknowledgment of the initiator’s commit before emitting its own commit.  
 Stored variables relevant: `duress_placeholder_i`, approvals bundle.  
 Allowed incoming events/messages: WT-signed initiator commit from Niso with fresh local height.  
@@ -2022,6 +2279,10 @@ Failure exits: initiator commit mismatch or freshness failure.
 Source anchors: `withdrawal.md` 35n–40; `non_initiator_withdrawal.puml` 35n–40.
 
 #### `Boomlet(i).Withdrawal.AwaitingCommitCollection`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: peer has emitted or is participating in commit processing and waits for the full WT-signed commit collection and matching SAR-signed placeholder.  
 Stored variables relevant: local commit, `saved_placeholder_for_sar_comparison_i`.  
 Allowed incoming events/messages: commit collection plus SAR-signed placeholder.  
@@ -2033,6 +2294,10 @@ Failure exits: placeholder mismatch, commit mismatch, freshness failure.
 Source anchors: `withdrawal.md` 44–45; `initiator_withdrawal.puml` 44–47; `non_initiator_withdrawal.puml` 44 and convergence note.
 
 #### `Boomlet(i).Withdrawal.DiggingGame`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Boomlet participates in the ping-pong loop until WT has a reached ping for every peer.  
 Stored variables relevant: `counter_i`, `ping_seq_num_i`, `reached_mystery_flag_i`, `reached_boomlets_collection_i`, `last_seen_block_i`, current `duress_placeholder_plaintext_i`, current `duress_latched_i`.  
 Allowed incoming events/messages: WT pong plus matching SAR-signed placeholder; local optional duress-check responses through ST; final `reached_pings_collection`.  
@@ -2044,6 +2309,10 @@ Failure exits: stale pong, invalid previous ping, placeholder mismatch, malforme
 Source anchors: `withdrawal.md` 45–62; `initiator_withdrawal.puml` 45–62; `duress.md` repeated-check rules.
 
 #### `Boomlet(i).Withdrawal.ReadyToSign`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: all peers have reached mystery and the hydrated PSBT matches the committed `tx_id`.  
 Stored variables relevant: verified `reached_pings_collection`, updated `psbt_i`.  
 Allowed incoming events/messages: `"withdrawal_initialized_start_signing"` from Iso.  
@@ -2055,6 +2324,10 @@ Failure exits: none specified.
 Source anchors: `withdrawal.md` 60–66; `initiator_withdrawal.puml` 60–66.
 
 #### `Boomlet(i).Withdrawal.SigningWithIso`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: local collaborative signing with Iso is underway.  
 Stored variables relevant: PSBT, descriptor, boom share pubkey, public nonce, partial signatures, local signed PSBT copy.  
 Allowed incoming events/messages: `pubnonce_normal`, `partialsig_normal`; later export request from Niso.  
@@ -2066,6 +2339,10 @@ Failure exits: signing failure is not specified separately.
 Source anchors: `withdrawal.md` 66–71; `initiator_withdrawal.puml` 66–71.
 
 #### `Boomlet(i).Withdrawal.PostReset` `[DERIVED]`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: local signed PSBT has been exported and Boomlet has performed the specified immediate cleanup.  
 Stored variables relevant: regenerated `mystery_i`; no active withdrawal-local variables except any export artifact not yet forgotten by other actors.  
 Allowed incoming events/messages: none from the same ceremony.  
@@ -2075,13 +2352,16 @@ Emitted messages: none.
 Next states: `Boomlet(i).ActiveReady`.  
 Failure exits: none.  
 Source anchors: `withdrawal.md` 71; `initiator_withdrawal.puml` 71.
-
-<a id="106-boomletwoi-machine"></a>
 ### 10.6 `Boomletwo(i)` machine
 
 [Back to TOC](#table-of-contents)
 
+
 #### `Boomletwo(i).Uninstalled`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: no backup applet exists yet.  
 Stored variables relevant: none.  
 Allowed incoming events/messages: installation command from Iso in backup mode.  
@@ -2093,6 +2373,10 @@ Failure exits: installation failure.
 Source anchors: `setup.md` 72–74; `setup.puml` 72–74.
 
 #### `Boomletwo(i).InstalledUnseeded`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: backup applet exists but no Boomlet state has been imported.  
 Stored variables relevant: Boomletwo identity keypair only.  
 Allowed incoming events/messages: encrypted backup blob and original Boomlet identity pubkey from Iso.  
@@ -2104,6 +2388,10 @@ Failure exits: backup decryption or import failure.
 Source anchors: `setup.md` 79–82; `setup.puml` 79–82.
 
 #### `Boomletwo(i).BackupImportedInactive`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: backup state exists but Boomletwo is not the active signing hardware.  
 Stored variables relevant: imported setup state and its own `mystery_i`.  
 Allowed incoming events/messages: none in the specified flows.  
@@ -2113,13 +2401,16 @@ Emitted messages: none.
 Next states: no operational next state in this specification; activation is ancillary and out of scope.  
 Failure exits: none within the specified flows.  
 Source anchors: `setup.md` 81–87; `setup.puml` 81–87; `DEEPDIVE.md` Boomletwo concern.
-
-<a id="107-nisoi-machine"></a>
 ### 10.7 `Niso(i)` machine
 
 [Back to TOC](#table-of-contents)
 
+
 #### `Niso(i).Uninitialized`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Niso has not yet been configured with network and node access.  
 Stored variables relevant: none.  
 Allowed incoming events/messages: user setup inputs or later user-ready events during withdrawal when already configured.  
@@ -2131,6 +2422,10 @@ Failure exits: node or network configuration failure.
 Source anchors: `setup.md` 29–30; `setup.puml` 29–30.
 
 #### `Niso(i).Setup.AwaitingTorIdentity`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Niso is configured and waiting for Boomlet’s Tor identity bundle.  
 Stored variables relevant: network, node auth, local Boomlet link.  
 Allowed incoming events/messages: `peer_i_id`, Tor secret key, signed Tor address from Boomlet.  
@@ -2142,6 +2437,10 @@ Failure exits: Tor address signature mismatch or derived-address mismatch.
 Source anchors: `setup.md` 30–33; `setup.puml` 30–33.
 
 #### `Niso(i).Setup.AwaitingPeerParametersFromUser`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: local Tor identity is established and Niso waits for user-supplied peer addresses, WT ids, and milestones.  
 Stored variables relevant: verified local identity bundle.  
 Allowed incoming events/messages: `peer_addresses_collection`, `wt_ids_collection`, `milestone_block_collection`.  
@@ -2153,6 +2452,10 @@ Failure exits: invalid peer signatures, connection failure, or self-inclusion fa
 Source anchors: `setup.md` 34–45; `setup.puml` 34–45.
 
 #### `Niso(i).Setup.AwaitingWTRegistrationInvoiceSettlement`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: `boomerang_params` are fixed and WT registration is underway.  
 Stored variables relevant: current `mystery_i`, WT registration material, WT invoice details.  
 Allowed incoming events/messages: WT invoice, user WT payment receipt, WT acknowledgment, peer WT-active fingerprints.  
@@ -2164,6 +2467,10 @@ Failure exits: unpaid WT invoice or mismatched WT acknowledgment.
 Source anchors: `setup.md` 47–59; `setup.puml` 47–59.
 
 #### `Niso(i).Setup.AwaitingSARActivationAck`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Niso is relaying SAR-finalization traffic and waiting for the corresponding acknowledgment and peer sync.  
 Stored variables relevant: WT and SAR activation relay state.  
 Allowed incoming events/messages: Boomlet SAR-init payload, WT-suffixed SAR response, peer SAR-active fingerprints.  
@@ -2175,6 +2482,10 @@ Failure exits: invalid WT suffix/signature or peer sync mismatch.
 Source anchors: `setup.md` 60–70; `setup.puml` 60–70.
 
 #### `Niso(i).Setup.AwaitingBackupCompletion`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Niso has informed the user that SAR is finalized and waits for the local backup choreography and later final backup sync.  
 Stored variables relevant: none beyond inherited setup state.  
 Allowed incoming events/messages: user local-ready events, Boomlet backup-sync fingerprint, peer backup fingerprints, final `"setup_done"`.  
@@ -2186,6 +2497,10 @@ Failure exits: backup sync mismatch.
 Source anchors: `setup.md` 88–94; `setup.puml` 88–94.
 
 #### `Niso(i).ActiveReady`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: setup is complete and Niso is the online coordinator waiting for withdrawal.  
 Stored variables relevant: online peer and WT connectivity, inherited setup state.  
 Allowed incoming events/messages: initiator PSBT from local user or WT initiation bundle if non-initiator.  
@@ -2196,6 +2511,10 @@ Next states: withdrawal entry states.
 Failure exits: none.
 
 #### `Niso(i).Withdrawal.Initiator.AwaitingPSBT`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: initiator Niso is waiting for the user-supplied PSBT.  
 Stored variables relevant: inherited setup state.  
 Allowed incoming events/messages: PSBT from User.  
@@ -2207,6 +2526,10 @@ Failure exits: milestone not reached or unsatisfiable PSBT.
 Source anchors: `withdrawal.md` 1–10; `initiator_withdrawal.puml` 1–10.
 
 #### `Niso(i).Withdrawal.NonInitiator.AwaitingWTInitiationBundle`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: non-initiator Niso waits for WT to forward the initiation bundle.  
 Stored variables relevant: inherited setup state.  
 Allowed incoming events/messages: `wt_tx_approval`, initiator approval, encrypted PSBT.  
@@ -2218,6 +2541,10 @@ Failure exits: bundle validation failure or stale WT approval.
 Source anchors: `withdrawal.md` 11–26; `non_initiator_withdrawal.puml` 11–26.
 
 #### `Niso(i).Withdrawal.AwaitingCommitCollection`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: local peer is in the commitment phase or waiting for the WT/SAR roundtrip on commitments.  
 Stored variables relevant: approval collections, local current height, local commit relay state.  
 Allowed incoming events/messages: local duress-check challenge/response relays, initiator commit from WT if non-initiator, local commit from Boomlet, full commit collection from WT.  
@@ -2229,6 +2556,10 @@ Failure exits: stale commit or SAR-return mismatch detected later by Boomlet.
 Source anchors: `withdrawal.md` 27–45; both withdrawal diagrams.
 
 #### `Niso(i).Withdrawal.DiggingGameRelay`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Niso is the relay and local-height observer for repeated pings, pongs, optional repeated duress checks, and the final reached-pings handoff.  
 Stored variables relevant: current `niso_i_event_block_height`, local peer’s last WT relay state, base `psbt_i`.  
 Allowed incoming events/messages: pings from Boomlet, pongs from WT, optional duress-check challenge/response messages, `reached_pings_collection` from WT, later signed PSBT from Boomlet.  
@@ -2240,6 +2571,10 @@ Failure exits: invalid reached-pings collection or hydration failure.
 Source anchors: `withdrawal.md` 46–62; `initiator_withdrawal.puml` 46–62.
 
 #### `Niso(i).Withdrawal.ReadyToSign`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: Niso has told the user to connect Boomlet to Iso and later must request the signed PSBT back from Boomlet after the user reconnects it.  
 Stored variables relevant: updated PSBT and reached-pings proof.  
 Allowed incoming events/messages: `"withdrawal_ready_to_sign"` from Boomlet, user reconnection magic after Iso signing, `psbt_signed_i` from Boomlet.  
@@ -2249,13 +2584,16 @@ Emitted messages: user notification and export request to Boomlet; signed PSBT t
 Next states: `Niso(i).Withdrawal.AwaitingWTBroadcast`, then `Niso(i).ActiveReady` after local reset.  
 Failure exits: none specified.  
 Source anchors: `withdrawal.md` 62–72; `initiator_withdrawal.puml` 62–72.
-
-<a id="108-wt-machine"></a>
 ### 10.8 `WT` machine
 
 [Back to TOC](#table-of-contents)
 
+
 #### `WT.Setup.CollectingPeerRegistrations`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: WT is collecting peer registration material for the fixed `boomerang_params_fingerprint`.  
 Stored variables relevant: registered peer identities, Tor addresses, signed sorted peer key lists, boomerang-parameter fingerprints.  
 Allowed incoming events/messages: peer registration requests from every Niso.  
@@ -2267,6 +2605,10 @@ Failure exits: signature failure or inconsistent registration data.
 Source anchors: `setup.md` 47–50; `setup.puml` 47–50.
 
 #### `WT.Setup.AwaitingWTFeeReceipts`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: WT waits for each peer’s service fee receipt.  
 Stored variables relevant: pending registration invoices.  
 Allowed incoming events/messages: WT payment receipts from Nisos.  
@@ -2278,6 +2620,10 @@ Failure exits: unpaid invoice.
 Source anchors: `setup.md` 50–55; `setup.puml` 50–55.
 
 #### `WT.Setup.RegisteredActive`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: WT is an active registered coordinator for the agreed peer set.  
 Stored variables relevant: registration table and activation state.  
 Allowed incoming events/messages: SAR finalization init payloads from peers.  
@@ -2289,6 +2635,10 @@ Failure exits: mismatched or unsigned SAR id collection.
 Source anchors: `setup.md` 55–63; `setup.puml` 55–63.
 
 #### `WT.Setup.AwaitingSARActivationData`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: WT is mediating peer finalization with SAR.  
 Stored variables relevant: per-peer SAR-finalization state.  
 Allowed incoming events/messages: SAR finalization responses.  
@@ -2300,6 +2650,10 @@ Failure exits: none specified.
 Source anchors: `setup.md` 63–70; `setup.puml` 63–70.
 
 #### `WT.Withdrawal.AwaitingInitiatorApproval`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: WT is ready for a new boomerang-regime withdrawal but has not yet stored the ceremony `tx_id`.  
 Stored variables relevant: active peer set from setup, current most-work block height.  
 Allowed incoming events/messages: initiator approval plus encrypted PSBT collection.  
@@ -2311,6 +2665,10 @@ Failure exits: stale or invalid initiator approval.
 Source anchors: `withdrawal.md` 8–10; `initiator_withdrawal.puml` 8–10.
 
 #### `WT.Withdrawal.CollectingPeerApprovals`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: WT is collecting non-initiator approvals for the stored `tx_id`.  
 Stored variables relevant: stored `tx_id`, initiator id, approval collection.  
 Allowed incoming events/messages: peer approvals from non-initiators.  
@@ -2322,6 +2680,10 @@ Failure exits: stale or mismatched peer approval.
 Source anchors: `withdrawal.md` 22–26; `initiator_withdrawal.puml` 24–25; `non_initiator_withdrawal.puml` 22–26.
 
 #### `WT.Withdrawal.CollectingCommitments`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: WT is processing initiator and non-initiator commits, with SAR roundtrips on each placeholder.  
 Stored variables relevant: commit collection, per-peer last placeholder relay state, stored `tx_id`.  
 Allowed incoming events/messages: initiator commit, non-initiator approvals bundles, non-initiator commits, SAR-signed placeholders.  
@@ -2333,6 +2695,10 @@ Failure exits: stale commit, invalid approvals bundle, SAR response missing for 
 Source anchors: `withdrawal.md` 33–45 and 33n–43; both withdrawal diagrams.
 
 #### `WT.Withdrawal.DiggingGame.CollectingPings`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: WT is inside the ping-pong loop and currently waiting for one ping from each peer for the next round.  
 Stored variables relevant: `reached_pings_collection`, current round’s pending pings, stored `tx_id`.  
 Allowed incoming events/messages: padded pings from all peers.  
@@ -2344,6 +2710,10 @@ Failure exits: invalid ping or missing ping from one or more peers.
 Source anchors: `withdrawal.md` 46–53 and 58–60; `initiator_withdrawal.puml` 46–53 and 58–60.
 
 #### `WT.Withdrawal.DiggingGame.DistributingPongs`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: WT has all pings for the current round and is constructing the next per-peer pongs.  
 Stored variables relevant: current round’s ping collection, current WT block height.  
 Allowed incoming events/messages: SAR-signed placeholders for the just-received pings.  
@@ -2355,6 +2725,10 @@ Failure exits: missing SAR placeholder acknowledgment.
 Source anchors: `withdrawal.md` 53–59; `initiator_withdrawal.puml` 53–59.
 
 #### `WT.Withdrawal.DistributingReachedPings`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: WT has a reached ping for every peer and can break the loop.  
 Stored variables relevant: final `reached_pings_collection`.  
 Allowed incoming events/messages: none additional are needed from peers to break.  
@@ -2366,6 +2740,10 @@ Failure exits: none.
 Source anchors: `withdrawal.md` 59–60; `initiator_withdrawal.puml` 59–60.
 
 #### `WT.Withdrawal.CollectingSignedPSBTs`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: WT is waiting for `psbt_signed_i` from all five peers.  
 Stored variables relevant: collection of signed PSBTs.  
 Allowed incoming events/messages: one signed PSBT per peer.  
@@ -2377,6 +2755,10 @@ Failure exits: missing one or more signed PSBTs.
 Source anchors: `withdrawal.md` 72–73; `initiator_withdrawal.puml` 72–73.
 
 #### `WT.Withdrawal.Broadcasting`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: WT has all five signed PSBTs and can produce the final signed transaction.  
 Stored variables relevant: signed-PSBT collection, aggregated signed transaction.  
 Allowed incoming events/messages: none.  
@@ -2386,13 +2768,16 @@ Emitted messages: network relay of `signed_tx`.
 Next states: back to a WT-ready idle state for later ceremonies.  
 Failure exits: aggregation failure or relay failure, neither of which is operationally specified further.  
 Source anchors: `withdrawal.md` 73; `initiator_withdrawal.puml` 73.
-
-<a id="109-sar-machine"></a>
 ### 10.9 `SAR` machine
 
 [Back to TOC](#table-of-contents)
 
+
 #### `SAR.AwaitingIdentifierOnlyRegistration`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: SAR has no record yet for a given user and is waiting for the initial identifier-only registration request from Phone.  
 Stored variables relevant: none for that user.  
 Allowed incoming events/messages: `doxing_data_identifier_i` from Phone.  
@@ -2404,6 +2789,10 @@ Failure exits: none specified.
 Source anchors: `setup.md` 1–3; `setup.puml` 1–3.
 
 #### `SAR.AwaitingPaymentAndEncryptedDoxingData`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: SAR has created an invoice and waits for proof of payment plus encrypted doxing data.  
 Stored variables relevant: pending registration keyed by `doxing_data_identifier_i`.  
 Allowed incoming events/messages: receipt plus encrypted static and dynamic doxing data from Phone.  
@@ -2415,6 +2804,10 @@ Failure exits: invalid payment proof.
 Source anchors: `setup.md` 5–7; `setup.puml` 5–7.
 
 #### `SAR.SyncedWithPhoneUnfinalized`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: SAR has the phone-side registration data but has not yet been finalized with Boomlet through WT.  
 Stored variables relevant: encrypted doxing records keyed by `doxing_data_identifier_i`.  
 Allowed incoming events/messages: SAR finalization payload relayed by WT.  
@@ -2426,6 +2819,10 @@ Failure exits: identifier not found.
 Source anchors: `setup.md` 60–64; `setup.puml` 60–64.
 
 #### `SAR.FinalizedActive`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: SAR has a finalized association between a Boomlet identity and previously registered doxing data and is ready to process duress placeholders.  
 Stored variables relevant: encrypted doxing registry, `seen_duress_iv_pairs`.  
 Allowed incoming events/messages: duress placeholders from WT during commitment or ping phases.  
@@ -2437,6 +2834,10 @@ Failure exits: malformed payload or identifier lookup failure; the general handl
 Source anchors: `withdrawal.md` 36–43; both withdrawal diagrams; `duress.md` placeholder semantics.
 
 #### `SAR.SearchAndRescueTriggered`
+
+[Back to TOC](#table-of-contents)
+
+
 Meaning: SAR has recognized a valid positive duress signal for a registered peer and has decrypted doxing data for operational use.  
 Stored variables relevant: decrypted static and dynamic doxing data for the affected user.  
 Allowed incoming events/messages: further placeholders for the same user, which may be duplicate or continued positive placeholders.  
@@ -2446,18 +2847,16 @@ Emitted messages: same SAR-signed placeholder acknowledgments as in non-duress h
 Next states: remains active for that user until off-model rescue concludes.  
 Failure exits: none specified inside the protocol.  
 Source anchors: `withdrawal.md` 36–43; `duress.md` duress consequences and SAR actions.
-
-<a id="11-transition-catalog"></a>
 ## 11. Transition catalog
 
 [Back to TOC](#table-of-contents)
 
-This catalog lists the load-bearing state transitions that change control state or durable protocol variables. Pure relay steps that preserve the sender’s macro-state are mapped exhaustively in Section 17. Transition IDs are stable and chosen so a later TLA+ action can inherit the same numbering.
 
-<a id="111-setup-transitions"></a>
+This catalog lists the load-bearing state transitions that change control state or durable protocol variables. Pure relay steps that preserve the sender’s macro-state are mapped exhaustively in Section 17. Transition IDs are stable and chosen so a later TLA+ action can inherit the same numbering.
 ### 11.1 Setup transitions
 
 [Back to TOC](#table-of-contents)
+
 
 **`SETUP.Phone.001`**  
 From state: `Phone(i).Setup.AwaitingRegistrationInput`  
@@ -2733,11 +3132,10 @@ State updates: setup completion flag
 To state: `Boomlet(i).ActiveReady`  
 Failure exits: peer sync mismatch  
 Exact source anchors: `setup.md` 90–94; `setup.puml` 90–94
-
-<a id="112-withdrawal-transitions"></a>
 ### 11.2 Withdrawal transitions
 
 [Back to TOC](#table-of-contents)
+
 
 **`WD.Peer(0).Niso.001`**  
 From state: `Niso(initiator).Withdrawal.Initiator.AwaitingPSBT`  
@@ -2980,16 +3378,15 @@ State updates: completed ceremony output
 To state: `WT.Withdrawal.Broadcasting`, then WT idle for future ceremonies  
 Failure exits: aggregation or relay failure not further specified  
 Exact source anchors: `withdrawal.md` 73; `initiator_withdrawal.puml` 73
-
-<a id="12-loop-specifications"></a>
 ## 12. Loop specifications
 
 [Back to TOC](#table-of-contents)
 
-<a id="121-duress-setup-confirmation-loop"></a>
+
 ### 12.1 Duress-setup confirmation loop
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: `duress_consent_set_i` has been derived from the first setup response and Boomlet generated the confirmation challenge.  
 Loop invariant(s):
@@ -3012,11 +3409,10 @@ Counter/state updates:
 Break condition: Boomlet verifies that the selected-number set equals `duress_consent_set_i`.  
 Post-loop state: `Boomlet(i).Setup.OfflineReadyAwaitingNiso`.  
 Source anchors: `setup.md` 20–27; `setup.puml` 20–27; `duress_setup.puml` messages 11–17.
-
-<a id="122-ping-pong-digging-game-loop"></a>
 ### 12.2 Ping-pong / digging-game loop
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: each peer has verified the full commit collection and its own SAR-signed placeholder, and has initialized `counter_i = 0`, `ping_seq_num_i = 0`, `reached_mystery_flag_i = 0`, `reached_boomlets_collection_i = {}`, and `last_seen_block_i = niso_i_event_block_height`.  
 Loop invariant(s):
@@ -3047,11 +3443,10 @@ Counter/state updates:
 Break condition: WT has `reached_pings_collection[peer_j]` for every peer id `peer_j` in the agreed peer set.  
 Post-loop state: `Boomlet(i).Withdrawal.ReadyToSign` after `reached_pings_collection` and `hydrated_psbt_i` are locally validated.  
 Source anchors: `withdrawal.md` 45–61; `initiator_withdrawal.puml` loop note and steps 45–61; `DEEPDIVE.md` withdrawal Group 6.
-
-<a id="123-repeated-duress-check-loop-during-withdrawal"></a>
 ### 12.3 Repeated duress-check loop during withdrawal
 
 [Back to TOC](#table-of-contents)
+
 
 Entry condition: Boomlet is in `Withdrawal.DiggingGame` and has just processed a pong.  
 Loop invariant(s):
@@ -3073,11 +3468,10 @@ Counter/state updates:
 Break condition: either the PRNG condition does not fire for a given pong, or the challenge/response sequence completes and a new placeholder is available.  
 Post-loop state: control returns to ordinary pong-processing and next-ping generation within `Boomlet(i).Withdrawal.DiggingGame`.  
 Source anchors: `withdrawal.md` 51–59; `initiator_withdrawal.puml` 51–59; `duress.md` PRNG-based interval choice; `duress_withdrawal.puml`.
-
-<a id="13-safety-properties-invariants"></a>
 ## 13. Safety properties / invariants
 
 [Back to TOC](#table-of-contents)
+
 
 The following safety properties are stated in precise English as invariant candidates for later formalization.
 
@@ -3116,75 +3510,67 @@ The following safety properties are stated in precise English as invariant candi
 17. **WT break condition correctness**. WT exits the digging loop only when it has a valid reached ping for every peer id in the agreed peer set. Having all current-round pings is not by itself sufficient.
 
 18. **Normal-regime non-interference in current machine**. No transition in the specified setup or withdrawal machine uses the deterministic normal regime. Its presence affects descriptor structure and fallback reasoning only.
-
-<a id="14-liveness-progress-properties"></a>
 ## 14. Liveness / progress properties
 
 [Back to TOC](#table-of-contents)
 
-The protocol intends the following progress properties, always under explicit assumptions.
 
-<a id="141-protocol-internal-progress"></a>
+The protocol intends the following progress properties, always under explicit assumptions.
 ### 14.1 Protocol-internal progress
 
 [Back to TOC](#table-of-contents)
 
+
 - If setup starts and every required local step, payment, relay, and peer-equality check succeeds, then setup can progress from SAR sign-up through final backup synchronization to `setup_done`.
 - If a boomerang-regime withdrawal starts after `milestone_block_0`, every peer continues participating, and all freshness windows continue to hold, then the withdrawal can progress from initiation through approval, commitment, digging game, signing, signed-PSBT export, WT aggregation, and local reset.
 - If all five peers eventually emit a reached ping, then WT will eventually break the digging loop and distribute `reached_pings_collection`.
-
-<a id="142-progress-requiring-honest-and-responsive-peers"></a>
 ### 14.2 Progress requiring honest and responsive peers
 
 [Back to TOC](#table-of-contents)
+
 
 - Setup parameter fixation requires that all peers eventually send matching signed `boomerang_params`.
 - WT-active, SAR-active, and backup-active synchronization each require that all peers eventually emit matching signed fingerprints for the corresponding shared state.
 - Withdrawal approval requires that all non-initiator peers eventually emit valid approvals.
 - Withdrawal commitment requires that all non-initiator peers eventually emit valid approvals bundles and then valid commits.
 - Digging-game termination requires that each peer eventually reach its local `mystery_i` and emit at least one valid reached ping that WT accepts.
-
-<a id="143-progress-requiring-wt-availability"></a>
 ### 14.3 Progress requiring WT availability
 
 [Back to TOC](#table-of-contents)
 
+
 - No boomerang-regime withdrawal progress past the initiator’s local ST approval is possible without WT.
 - WT must remain available to distribute `wt_tx_approval`, collect approvals and commits, drive the ping-pong loop, distribute pongs, distribute `reached_pings_collection`, and aggregate signed PSBTs.
 - The design recognizes WT replacement as an ancillary procedure, so WT failure is a liveness failure in the current machine.
-
-<a id="144-progress-requiring-sar-availability"></a>
 ### 14.4 Progress requiring SAR availability
 
 [Back to TOC](#table-of-contents)
 
+
 - Commitment and ping processing, as specified, include SAR placeholder forwarding and return acknowledgments. The authoritative flows do not define a branch that proceeds without SAR responses, so SAR unavailability blocks those WT transitions.
 - SAR does not directly control spending authority, but SAR availability is operationally required for the specified WT/peer progress path.
-
-<a id="145-progress-subject-to-freshness-windows-and-forced-determinism"></a>
 ### 14.5 Progress subject to freshness windows and forced determinism
 
 [Back to TOC](#table-of-contents)
+
 
 - Even with honest actors, progress can fail if approval, commitment, ping, or pong messages arrive outside the source-defined freshness windows.
 - Progress can also fail if the withdrawal begins too late relative to the deterministic fallback milestones, because the design itself identifies late-start forced determinism as a collapse of the intended probabilistic guarantee.
 - The design intends the digging game to have finite completion because each `mystery_i` is finite, but actual progress still depends on repeated communication rounds succeeding often enough before freshness assumptions fail.
 - The current machine does not specify how to recover from failed freshness or forced-determinism conditions; it only recognizes them.
-
-<a id="15-failure-timeout-freshness-and-forced-determinism-conditions"></a>
 ## 15. Failure, timeout, freshness, and forced-determinism conditions
 
 [Back to TOC](#table-of-contents)
+
 
 This section enumerates failure edges that are explicit or directly implied by the sources. Classification is:
 - **Terminal**: current ceremony cannot progress in the specified machine.
 - **Retryable**: the sources explicitly allow retry.
 - **Unspecified**: a failure is identified, but no recovery is defined.
-
-<a id="151-setup-failures"></a>
 ### 15.1 Setup failures
 
 [Back to TOC](#table-of-contents)
+
 
 - SAR invoice not paid: terminal for current setup attempt.
 - SAR payment receipt invalid: terminal.
@@ -3208,11 +3594,10 @@ This section enumerates failure edges that are explicit or directly implied by t
 - Backup import decryption failure on Boomletwo: terminal.
 - `backup_done` signature or content mismatch: terminal.
 - All-peers WT/SAR/backup fingerprint sync mismatch: terminal.
-
-<a id="152-withdrawal-approval-failures"></a>
 ### 15.2 Withdrawal approval failures
 
 [Back to TOC](#table-of-contents)
+
 
 - `milestone_block_0` not yet reached at initiator start or non-initiator receipt: terminal for boomerang-regime start until the milestone is later reached.
 - PSBT unsatisfiable or hydration returns null: terminal for that withdrawal attempt.
@@ -3222,11 +3607,10 @@ This section enumerates failure edges that are explicit or directly implied by t
 - Approval magic mismatch or `tx_id` mismatch: terminal.
 - Approval freshness failure: terminal for the current ceremony as specified.
 - Missing non-initiator approval: progress failure and therefore terminal in the specified machine.
-
-<a id="153-commitment-phase-failures"></a>
 ### 15.3 Commitment-phase failures
 
 [Back to TOC](#table-of-contents)
+
 
 - Initial duress-check response nonce mismatch: terminal for that attempt.
 - Placeholder generation/decryption failure: terminal.
@@ -3236,11 +3620,10 @@ This section enumerates failure edges that are explicit or directly implied by t
 - SAR cannot decrypt placeholder or cannot map a positive placeholder to a registered identifier: duress handling may fail; commitment progress after such malformed input is unspecified.
 - Returned SAR-signed placeholder fails signature check or does not match the placeholder previously sent: terminal locally.
 - Full commit collection signature/content/freshness mismatch: terminal locally.
-
-<a id="154-digging-game-failures"></a>
 ### 15.4 Digging-game failures
 
 [Back to TOC](#table-of-contents)
+
 
 - Ping outer or inner signature failure: terminal for that ping.
 - Ping magic mismatch, `tx_id` mismatch, or freshness failure: terminal for that ping.
@@ -3252,11 +3635,10 @@ This section enumerates failure edges that are explicit or directly implied by t
 - `reached_pings_collection` missing a peer or containing an invalid reached ping at finalization: terminal locally.
 - WT unavailability during the loop: terminal for progress.
 - SAR unavailability for placeholders during the loop: terminal for progress in the specified flow.
-
-<a id="155-signing-and-export-failures"></a>
 ### 15.5 Signing and export failures
 
 [Back to TOC](#table-of-contents)
+
 
 - User does not reconnect Boomlet to Iso after ready-to-sign: progress failure; unspecified timeout handling.
 - Iso cannot reconstruct signing material from mnemonic/passphrase: terminal for that peer.
@@ -3265,11 +3647,10 @@ This section enumerates failure edges that are explicit or directly implied by t
 - Boomlet export request not received or `psbt_signed_i` not delivered to WT: progress failure.
 - WT does not receive all five signed PSBTs: terminal for final broadcast in the specified machine.
 - WT aggregation or relay failure: terminal or unspecified post-failure handling.
-
-<a id="156-forced-determinism-and-structural-failures"></a>
 ### 15.6 Forced-determinism and structural failures
 
 [Back to TOC](#table-of-contents)
+
 
 - Boomlet loss or destruction before boomerang-regime spend completes: the boomerang-regime guarantee collapses; the design falls back conceptually to later deterministic scripts. The actual operational recovery is outside this machine.
 - Loss of both Boomlet and Boomletwo: recognized in `DEEPDIVE.md` as forced determinism or protocol collapse; terminal for the boomerang-regime machine.
@@ -3277,22 +3658,20 @@ This section enumerates failure edges that are explicit or directly implied by t
 - A peer stops cooperating: terminal for 5-of-5 boomerang-regime progress.
 - Dynamic doxing-data feed loss or tampering by Phone compromise: not a protocol-spending failure but a degradation of SAR effectiveness; recovery unspecified.
 - Missing SAR acknowledgment, missing WT replacement, or prolonged peer latency: recognized as unresolved ancillary issues; recovery unspecified.
-
-<a id="157-timeout-status"></a>
 ### 15.7 Timeout status
 
 [Back to TOC](#table-of-contents)
+
 
 The sources mention timeouts, stale messages, and freshness windows, but they do not specify a general timeout machine. Therefore:
 - freshness failures are modeled as explicit invalidating guards;
 - human absence during repeated duress checks is a liveness failure, not a hidden timeout branch;
 - any explicit retry exists only where a source explicitly says so;
 - all other retry/abort/resume logic is unspecified.
-
-<a id="16-ambiguity-conflict-register"></a>
 ## 16. Ambiguity / conflict register
 
 [Back to TOC](#table-of-contents)
+
 
 **ACR-01 — Setup duress challenge structure**  
 Source anchors: `setup.md` 14–26; `setup.puml` 14–26; `duress.md` setup subsection; `duress_setup.puml` messages 4–16.  
@@ -3391,16 +3770,15 @@ Exact ambiguity/conflict: the sources are consistent on semantic checks but not 
 Conservative interpretation used here: every ST display and every user/ST input is modeled as an explicit event.  
 Why it matters: hiding these interactions would make duress and approval subprotocols under-specified.  
 Decision needed: keep them explicit in the formal model unless a later design intentionally abstracts them away.
-
-<a id="17-source-to-machine-coverage-matrix"></a>
 ## 17. Source-to-machine coverage matrix
 
 [Back to TOC](#table-of-contents)
 
-<a id="171-setupmd-numbered-step-coverage"></a>
+
 ### 17.1 `setup.md` numbered-step coverage
 
 [Back to TOC](#table-of-contents)
+
 
 - `setup.md` 1 -> state(s): SAR sign-up states in `User(i)`, `Phone(i)`, and `SAR`; transition(s): `SETUP.Phone(i).001`; diagram note: `setup.puml` step 1; summary: At the start of SAR registration, Phone receives {doxing_password, sar_ids_collection, static_doxing_data} fr…
 - `setup.md` 2 -> state(s): SAR sign-up states in `User(i)`, `Phone(i)`, and `SAR`; transition(s): `SETUP.SAR.002`; diagram note: `setup.puml` step 2; summary: SAR receives doxing_data_identifier from Phone and responds with a newly generated sar_service_fee_payment_in…
@@ -3496,11 +3874,10 @@ Decision needed: keep them explicit in the formal model unless a later design in
 - `setup.md` 92 -> state(s): final setup synchronization states in `Niso(i)` and `Boomlet(i)`; transition(s): `SETUP.Peer(i).Boomlet.092`; diagram note: `setup.puml` step 92; summary: Boomlet receives shared_state_active_backup_fingerprint_signed_by_all_peers from Niso. It checks the content …
 - `setup.md` 93 -> state(s): final setup synchronization states in `Niso(i)` and `Boomlet(i)`; transition(s): `SETUP.Peer(i).Niso.093`; diagram note: `setup.puml` step 93; summary: Niso receives {magic: "setup_done"} from Boomlet and proceeds to inform User that setup is finished.
 - `setup.md` 94 -> state(s): final setup synchronization states in `Niso(i)` and `Boomlet(i)`; transition(s): `SETUP.User(i).094`; diagram note: `setup.puml` step 94; summary: User receives {magic: "setup_done"} from Niso.
-
-<a id="172-withdrawalmd-numbered-step-coverage"></a>
 ### 17.2 `withdrawal.md` numbered-step coverage
 
 [Back to TOC](#table-of-contents)
+
 
 - `withdrawal.md` 1 -> state(s): initiator start/approval states in `User(initiator)`, `Niso(initiator)`, `Boomlet(initiator)`, `ST(initiator)`, and `WT`; transition(s): `WD.Peer(i).Niso.001`; diagram note: `initiator_withdrawal.puml` step 1; summary: Niso receives psbt from User. Niso checks that most_work_bitcoin_block_height has passed milestone_block_0 fr…
 - `withdrawal.md` 2 -> state(s): initiator start/approval states in `User(initiator)`, `Niso(initiator)`, `Boomlet(initiator)`, `ST(initiator)`, and `WT`; transition(s): `WD.Peer(i).Boomlet.002`; diagram note: `initiator_withdrawal.puml` step 2; summary: Boomlet receives {psbt, niso_0_event_block_height} from Niso and checks to see if the niso_0_event_block_heig…
@@ -3584,11 +3961,10 @@ Decision needed: keep them explicit in the formal model unless a later design in
 - `withdrawal.md` 71 -> state(s): ready-to-sign, signing, export, and broadcast states; transition(s): `WD.Peer(i).Boomlet.071`; diagram note: `initiator_withdrawal.puml` step 71; summary: Boomlet receives {magic: "withdrawal_signing_finished_export_signed_psbt"} from Niso and proceeds to respond …
 - `withdrawal.md` 72 -> state(s): ready-to-sign, signing, export, and broadcast states; transition(s): `WD.Peer(i).Niso.072`; diagram note: `initiator_withdrawal.puml` step 72; summary: Niso receives psbt_signed_0 from Boomlet and forwards it to WT.
 - `withdrawal.md` 73 -> state(s): ready-to-sign, signing, export, and broadcast states; transition(s): `WD.WT.073`; diagram note: `initiator_withdrawal.puml` step 73; summary: WT receives psbt_signed_0 from Niso and psbt_signed_i [1 <= i <= 4] from Peers. WT aggregates the `signed_psb…
-
-<a id="173-duressmd-load-bearing-rule-coverage"></a>
 ### 17.3 `duress.md` load-bearing rule coverage
 
 [Back to TOC](#table-of-contents)
+
 
 - `duress.md` “duress mechanism does not cover setup stage” -> state(s): global phase boundary between `Global.Setup.*` and `Global.Withdrawal.*`; invariant(s): setup never emits operational duress placeholders; assumption(s): setup may still configure `duress_consent_set_i` but is not itself coercion-protected.
 - `duress.md` doxing-data definitions -> variable(s): `doxing_key_i`, `doxing_data_identifier_i`, `sar_registry`, dynamic/static encrypted doxing records; actor machine(s): `Phone(i)` and `SAR`.
@@ -3600,11 +3976,10 @@ Decision needed: keep them explicit in the formal model unless a later design in
 - `duress.md` repeated random duress checks chosen by Boomlet PRNG -> loop(s): Section 12.3; transition(s): `WD.Peer(i).Boomlet.051`.
 - `duress.md` attacker assumptions -> assumption(s): Section 5 and Section 15; not translated into protocol transitions except where they justify trust boundaries.
 - `duress.md` ST secrecy assumptions -> assumption(s): Section 5; actor-local machine `ST(i)`; ambiguity note(s): Section 16 ACR-14.
-
-<a id="174-deepdivemd-load-bearing-architectural-and-failure-mode-statement-coverage"></a>
 ### 17.4 `DEEPDIVE.md` load-bearing architectural and failure-mode statement coverage
 
 [Back to TOC](#table-of-contents)
+
 
 - Two-regime descriptor structure -> Sections 1, 4, 5, 6, and 13; variable(s): `boomerang_descriptor`, `boomerang_params`.
 - Boomerang regime as 5-of-5 using boom keys before deterministic scripts -> Sections 1, 6, 8, and 13.
@@ -3621,16 +3996,15 @@ Decision needed: keep them explicit in the formal model unless a later design in
 - Concern about hardware loss and one-active-backup discipline -> Sections 4, 5, 6, 15, and 16 ACR-11.
 - Concern about setup-instance uniqueness and replay hardening -> Sections 3, 13, 15, and 16.
 - Economic/deterrence intent -> Section 1 and liveness assumptions only; not translated into operative transitions.
-
-<a id="18-tla-readiness-summary"></a>
 ## 18. TLA+-readiness summary
 
 [Back to TOC](#table-of-contents)
 
-<a id="181-minimal-state-set-summary"></a>
+
 ### 18.1 Minimal state-set summary
 
 [Back to TOC](#table-of-contents)
+
 
 A first formal model does not need to encode every user-device interaction as a separate action if it keeps the following state sets explicit:
 
@@ -3641,11 +4015,10 @@ A first formal model does not need to encode every user-device interaction as a 
 - Message frontier state: whether the currently relevant approval, commit, ping, pong, or finalization message has been sent, received, and validated by the intended receiver.
 
 That state set is already sufficient to express the key safety obligations: fixed `tx_id`, monotone reaching, no early signing, and observational equivalence of duress and non-duress flows.
-
-<a id="182-variables-that-matter-most-in-tla"></a>
 ### 18.2 Variables that matter most in TLA+
 
 [Back to TOC](#table-of-contents)
+
 
 The variables that most strongly determine the later formal model are these:
 
@@ -3669,11 +4042,10 @@ The variables that most strongly determine the later formal model are these:
 18. `psbt_i`, `hydrated_psbt_i`, and `signed_psbt_i`
 
 If a first TLA+ model abstracts away real cryptography, these variables still have to remain because they carry the machine’s protocol meaning. In contrast, low-level signature bytes, exact ciphertext bytes, or exact QR encodings can be abstracted into symbolic values and guards without losing the core control logic.
-
-<a id="183-top-10-unresolved-issues-most-likely-to-change-the-formal-model"></a>
 ### 18.3 Top 10 unresolved issues most likely to change the formal model
 
 [Back to TOC](#table-of-contents)
+
 
 1. Whether setup duress uses a five-element challenge or a full permutation of 1..195.
 2. The exact retry/restart policy for failed setup confirmation.
@@ -3685,11 +4057,10 @@ If a first TLA+ model abstracts away real cryptography, these variables still ha
 8. Whether `counter_i` persists across aborted withdrawals or is purely ceremony-local.
 9. How malformed SAR messages and missing SAR responses are meant to affect progress in the authoritative withdrawal flow.
 10. How forced determinism is supposed to appear in the state machine, if at all, before a later deterministic-regime or ancillary-recovery model is introduced.
-
-<a id="184-recommended-first-tla-slice"></a>
 ### 18.4 Recommended first TLA+ slice
 
 [Back to TOC](#table-of-contents)
+
 
 The first TLA+ slice should start **after setup**, from a state in which:
 - `boomerang_params` are already fixed,
